@@ -26,6 +26,11 @@
         "sha": "569c5283d9a0a7ee7938df85bb32e4f48cbb8c86"
       },
       "description": "Step through the file edits Claude made in the last turn, one diff at a time."
+    },
+    {
+      "name": "session-usage",
+      "source": "./session-usage",
+      "description": "Bar above the prompt with live session cost, context fill, rate limits and per-turn token usage."
     }
   ]
 }

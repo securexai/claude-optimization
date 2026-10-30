@@ -27,7 +27,8 @@
     "cache-tax@claude-code-mods": true,
     "cc-plugin-you-should-know@builtin": true,
     "blast-radius@claude-optimization": true,
-    "replay-theater@claude-optimization": true
+    "replay-theater@claude-optimization": true,
+    "session-usage@claude-optimization": true
   },
   "extraKnownMarketplaces": {
     "claude-optimization": {

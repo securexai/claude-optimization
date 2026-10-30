@@ -1,0 +1,6 @@
+{
+  "name": "session-usage",
+  "version": "0.1.0",
+  "description": "Bar above the prompt with live session cost, context fill, rate limits and per-turn token usage",
+  "types": "./types/index.d.ts"
+}
