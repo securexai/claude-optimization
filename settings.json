@@ -1,0 +1,57 @@
+{
+  "attribution": {
+    "commit": "",
+    "pr": "",
+    "sessionUrl": false
+  },
+  "permissions": {
+    "defaultMode": "auto"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Monitor",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/bash-guard.sh",
+            "args": [],
+            "timeout": 10,
+            "onFailure": "block"
+          }
+        ]
+      }
+    ]
+  },
+  "enabledPlugins": {
+    "cache-tax@claude-code-mods": true,
+    "cc-plugin-you-should-know@builtin": true,
+    "blast-radius@claude-optimization": true,
+    "replay-theater@claude-optimization": true
+  },
+  "extraKnownMarketplaces": {
+    "claude-optimization": {
+      "source": {
+        "source": "directory",
+        "path": "~/.claude/marketplace"
+      }
+    },
+    "claude-code-mods": {
+      "source": {
+        "source": "github",
+        "repo": "karanb192/claude-code-mods"
+      }
+    }
+  },
+  "modelSettings": {
+    "claude-opus-5-5": {
+      "effortLevel": "medium"
+    },
+    "claude-haiku-5-5": {
+      "effortLevel": "xhigh"
+    }
+  },
+  "tui": "fullscreen",
+  "theme": "dark",
+  "agentPushNotifEnabled": true
+}

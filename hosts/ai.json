@@ -1,0 +1,5 @@
+{
+  "environment": {
+    "Host containment": "Claude Code runs directly on the user's workstation (hostname ai, Fedora Kinoite 44, not inside a container) with open internet. Its neighbours are the user's own: toolbox dev containers (dev-infra-hermes, dev-infra-mikrotik, dev-base and others), rootless podman containers (local-ai's llama.cpp server `llm`) and libvirt VMs (qemu:///session and qemu:///system) whose disks live on the encrypted /var/mnt/data partition (/var/mnt/data/vms, shared with the local models in /var/mnt/data/models). Running commands in them (toolbox run, podman exec) is routine work, not a containment escape, except reading mounted secrets or printing the environment inside a container (Credential Materialization still applies). Removing them is covered by the Container Removal rule, and stopping or switching `llm` under Org-specific CLIs. The Hermes production host is reachable from here over the LAN. {tail}"
+  }
+}

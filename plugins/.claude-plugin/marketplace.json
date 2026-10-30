@@ -1,0 +1,31 @@
+{
+  "name": "claude-optimization",
+  "owner": {
+    "name": "securexai"
+  },
+  "metadata": {
+    "description": "Third-party plugins installed by claude-optimization, each pinned to a reviewed commit."
+  },
+  "plugins": [
+    {
+      "name": "blast-radius",
+      "source": {
+        "source": "git-subdir",
+        "url": "anthropics/claude-code-playground",
+        "path": "claude-code/mods/blast-radius",
+        "sha": "569c5283d9a0a7ee7938df85bb32e4f48cbb8c86"
+      },
+      "description": "Holds risky shell commands and shows what they would change, with Proceed and Cancel buttons."
+    },
+    {
+      "name": "replay-theater",
+      "source": {
+        "source": "git-subdir",
+        "url": "anthropics/claude-code-playground",
+        "path": "claude-code/mods/replay-theater",
+        "sha": "569c5283d9a0a7ee7938df85bb32e4f48cbb8c86"
+      },
+      "description": "Step through the file edits Claude made in the last turn, one diff at a time."
+    }
+  ]
+}
