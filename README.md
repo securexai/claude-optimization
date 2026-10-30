@@ -42,6 +42,39 @@ cd claude-optimization
 - Blast Radius holds `rm -r`/`-f`, `git reset --hard`, `git clean`, `git checkout -- .`, force pushes and migrations until you press Proceed (`1`) or Cancel (`2`). It refuses after 10 minutes without an answer, so in headless runs (`claude -p`) those commands are refused. Below about 144 columns it draws in the band above the prompt, which Replay Theater also uses after every turn that edits files, so its buttons may not show there. Use a wide terminal when you rely on it.
 - The repository is the source of truth: `~/.claude/settings.json` is overwritten on each run that renders something different, so make lasting changes (including ones made with `/config`) here.
 
+### Without the Installer
+
+`./install.sh` is the supported path. To copy an existing setup by hand instead, copy the files below from a machine where the installer has already run, then let `claude` register the plugins. Copying `~/.claude/plugins/cache/` alone does nothing: Claude Code loads only the plugins recorded in `~/.claude/plugins/installed_plugins.json` and `known_marketplaces.json`.
+
+1. Copy these from `~/.claude/` to the same place on the new machine:
+
+   ```
+   ~/.claude/settings.json
+   ~/.claude/CLAUDE.md
+   ~/.claude/hooks/bash-guard.sh
+   ~/.claude/skills/
+   ~/.claude/marketplace/
+   ```
+
+   The installed `settings.json` holds absolute paths (the `bash-guard.sh` hook command and the `claude-optimization` marketplace `path`). If the new machine's home directory differs, change both.
+
+2. Log in with `claude auth login`, then register the marketplaces and install the plugins:
+
+   ```bash
+   claude plugin marketplace add ~/.claude/marketplace
+   claude plugin marketplace add karanb192/claude-code-mods
+   claude plugin install cache-tax@claude-code-mods
+   claude plugin install blast-radius@claude-optimization
+   claude plugin install replay-theater@claude-optimization
+   claude plugin install session-usage@claude-optimization
+   ```
+
+   Each plugin lands in `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/`. `cc-plugin-you-should-know@builtin` needs no install; its `settings.json` entry turns it on.
+
+A pure file copy also works if the home directory is the same on both machines: add `~/.claude/plugins/cache/`, `~/.claude/plugins/marketplaces/`, `~/.claude/plugins/installed_plugins.json` and `~/.claude/plugins/known_marketplaces.json` to the list in step 1 and skip the plugin commands. Those two JSON files also hold absolute paths, so this breaks when the home directory differs.
+
+A manual copy skips the installer's checks: the dependency and defaults-snapshot checks, the `bash-guard.sh` self-test, the pinned-commit check and the `claude auto-mode config` verification. Run `./install.sh` later to get them.
+
 ## Adding a Host
 
 Create `hosts/<short-hostname>.json` with only the slots that describe that machine:
