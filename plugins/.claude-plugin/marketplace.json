@@ -28,6 +28,11 @@
       "description": "Step through the file edits Claude made in the last turn, one diff at a time."
     },
     {
+      "name": "cache-tax",
+      "source": "./cache-tax",
+      "description": "Keeps the one-hour prompt cache warm for a window you set (/keepwarm 6h) and stops a cold send once with its estimated rewrite cost. Vendored from karanb192/cache-tax v2.3.0."
+    },
+    {
       "name": "session-usage",
       "source": "./session-usage",
       "description": "Bar above the prompt with live session cost, context fill, rate limits and per-turn token usage."
