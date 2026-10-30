@@ -9,11 +9,12 @@
 #      matches `claude auto-mode defaults`.
 #   2. Self-test the repo's bash-guard.sh (onFailure is "block", so a broken hook must never go live).
 #   3. Render settings.json from the shared base plus hosts/NAME.json (hooks/render-settings.py) into a temp file.
-#   4. Install bash-guard.sh, CLAUDE.md, local skills (~/.claude/skills), the plugins/ marketplace (~/.claude/marketplace),
-#      then settings.json; replaced files are backed up.
+#   4. Install bash-guard.sh, CLAUDE.md, local skills (~/.claude/skills), the plugins/ marketplace and its local plugins
+#      (~/.claude/marketplace), then settings.json; replaced files are backed up, except in the marketplace copy.
 #   5. Stop unless claude is logged in, so plugins and verification run only for a logged-in setup. Rerun after `claude auth login`.
 #   6. Ensure marketplaces and plugins from settings.json are installed (@builtin plugins need only their settings entry),
-#      and update plugins whose installed commit differs from the sha pinned in plugins/.claude-plugin/marketplace.json.
+#      and reinstall plugins whose installed commit differs from the sha pinned in plugins/.claude-plugin/marketplace.json,
+#      or, for a local plugin, whose installed files differ from plugins/NAME.
 #   7. Verify the effective auto-mode configuration via `claude auto-mode config`.
 # ~/.claude means $CLAUDE_CONFIG_DIR when that is set.
 set -euo pipefail
@@ -90,9 +91,19 @@ marketplaces=$(jq -r '(.extraKnownMarketplaces // {}) | to_entries[] | .key as $
     else error("marketplace \($k): only GitHub (source.repo) and directory (source.path) sources are supported") end' \
   "$rendered")
 plugins=$(jq -r '(.enabledPlugins // {}) | to_entries[] | select(.value == true) | .key' "$rendered")
-# Commits pinned by the local marketplace, as "plugin@marketplace<TAB>sha", for the update check in step 6.
-pins=$(jq -r '.name as $m | .plugins[] | "\(.name)@\($m)\t\(.source.sha // error("plugin \(.name): pin a sha"))"' \
+# Commits pinned by the local marketplace's git sources, as "plugin@marketplace<TAB>sha", for the update check in step 6.
+pins=$(jq -r '.name as $m | .plugins[] | select(.source | type == "object")
+  | "\(.name)@\($m)\t\(.source.sha // error("plugin \(.name): pin a sha"))"' "$marketplace_src")
+# Local plugins (a "./NAME" source shipped from plugins/NAME), as "plugin@marketplace", for steps 4 and 6.
+local_plugins=$(jq -r '.name as $m | .plugins[] | select(.source | type == "string")
+  | if .source == "./\(.name)" then "\(.name)@\($m)" else error("plugin \(.name): a local source must be ./\(.name)") end' \
   "$marketplace_src")
+while IFS= read -r plugin_id; do
+  [ -z "$plugin_id" ] || [ -f "$here/plugins/${plugin_id%@*}/.claude-plugin/plugin.json" ] || {
+    echo "Error: local plugin ${plugin_id%@*} has no plugins/${plugin_id%@*}/.claude-plugin/plugin.json." >&2
+    exit 1
+  }
+done <<<"$local_plugins"
 
 # --- 4. Install files ---
 ensure_dir() {
@@ -120,6 +131,50 @@ install_file() {
   echo "Installed $dst"
 }
 
+# tree_files DIR: DIR's files as sorted ./paths, leaving out the .claude-plugin/types/ that Claude Code writes beside a mod.
+tree_files() {
+  (cd "$1" && find . -type f -not -path './.claude-plugin/types/*' | LC_ALL=C sort)
+}
+
+# same_tree A B: true when B holds exactly A's files with the same content.
+same_tree() {
+  local a=$1 b=$2 list f
+  [ -d "$a" ] && [ -d "$b" ] || return 1
+  list=$(tree_files "$a") || return 1
+  [ "$list" = "$(tree_files "$b")" ] || return 1
+  while IFS= read -r f; do
+    [ -z "$f" ] || cmp -s "$a/$f" "$b/$f" || return 1
+  done <<<"$list"
+}
+
+# sync_tree SRC DST: make DST hold exactly SRC's files. DST is the installer's own copy of a local plugin, so changed
+# files are replaced without backups and files no longer in SRC are removed.
+sync_tree() {
+  local src=$1 dst=$2 src_list dst_list f mode changed=0
+  ensure_dir "$dst"
+  src_list=$(tree_files "$src")
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    mode=0644
+    [ -x "$src/$f" ] && mode=0755
+    if [ -f "$dst/$f" ] && cmp -s "$src/$f" "$dst/$f" && [ "$(stat -c %a "$dst/$f")" = "${mode#0}" ]; then
+      continue
+    fi
+    ensure_dir "$(dirname "$dst/$f")"
+    install -m "$mode" "$src/$f" "$dst/$f"
+    echo "Installed $dst/${f#./}"
+    changed=1
+  done <<<"$src_list"
+  dst_list=$(tree_files "$dst")
+  while IFS= read -r f; do
+    [ -n "$f" ] && [ ! -f "$src/$f" ] || continue
+    rm -f "$dst/$f"
+    echo "Removed $dst/${f#./} (no longer in $src)"
+    changed=1
+  done <<<"$dst_list"
+  [ "$changed" = 1 ] || echo "Up to date: $dst"
+}
+
 ensure_dir "$claude_dir"
 ensure_dir "$hooks_dir"
 ensure_dir "$skills_dir"
@@ -141,6 +196,9 @@ for src_file in "$here"/skills/**; do
 done
 shopt -u globstar nullglob dotglob
 install_file "$marketplace_src" "$marketplace_dst/.claude-plugin/marketplace.json" 0644
+while IFS= read -r plugin_id; do
+  [ -z "$plugin_id" ] || sync_tree "$here/plugins/${plugin_id%@*}" "$marketplace_dst/${plugin_id%@*}"
+done <<<"$local_plugins"
 
 # settings.json keeps its current mode and is replaced atomically.
 if [ -f "$settings_dst" ] && cmp -s "$rendered" "$settings_dst"; then
@@ -194,6 +252,9 @@ installed_pl=$claude_dir/plugins/installed_plugins.json
 installed_sha() { # installed_sha ID: the commit of the user-scope install of plugin ID, or nothing
   jq -r --arg p "$1" '[.plugins[$p][]? | select(.scope == "user") | .gitCommitSha] | first // empty' "$installed_pl"
 }
+installed_path() { # installed_path ID: where the user-scope install of plugin ID lives, or nothing
+  jq -r --arg p "$1" '[.plugins[$p][]? | select(.scope == "user") | .installPath] | first // empty' "$installed_pl"
+}
 while IFS= read -r plugin_id; do
   [ -n "$plugin_id" ] || continue
   # Built-in plugins ship inside claude and can't be installed; their settings.json entry is what enables them.
@@ -204,6 +265,20 @@ while IFS= read -r plugin_id; do
   else
     echo "Installing plugin: $plugin_id..."
     claude plugin install "$plugin_id" </dev/null
+  fi
+  if grep -qxF "$plugin_id" <<<"$local_plugins"; then
+    # A local plugin has no commit to pin; its installed copy must match the one step 4 put in the marketplace.
+    local_src=$marketplace_dst/${plugin_id%@*}
+    if ! same_tree "$local_src" "$(installed_path "$plugin_id")"; then
+      echo "Reinstalling plugin $plugin_id from $local_src..."
+      claude plugin uninstall "$plugin_id" --scope user --keep-data </dev/null
+      claude plugin install "$plugin_id" --scope user </dev/null
+      same_tree "$local_src" "$(installed_path "$plugin_id")" || {
+        echo "Error: the installed $plugin_id at '$(installed_path "$plugin_id")' does not match $local_src after reinstalling." >&2
+        exit 1
+      }
+    fi
+    continue
   fi
   pin=$(awk -F'\t' -v p="$plugin_id" '$1 == p { print $2 }' <<<"$pins")
   [ -n "$pin" ] || continue

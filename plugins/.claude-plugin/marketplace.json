@@ -4,7 +4,7 @@
     "name": "securexai"
   },
   "metadata": {
-    "description": "Third-party plugins installed by claude-optimization, each pinned to a reviewed commit."
+    "description": "Plugins installed by claude-optimization: third-party ones pinned to a reviewed commit, local ones shipped from plugins/."
   },
   "plugins": [
     {
