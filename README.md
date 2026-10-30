@@ -8,7 +8,7 @@ Portable global configuration, Auto Mode policy, and `PreToolUse` safety hook fo
 | :--- | :--- |
 | [`CLAUDE.md`](CLAUDE.md) | Global working agreements installed to `~/.claude/CLAUDE.md`. |
 | [`skills/plan-execution/`](skills/plan-execution/SKILL.md) | Local `plan-execution` skill (referenced by [`CLAUDE.md`](CLAUDE.md)) installed to `~/.claude/skills/plan-execution/`. |
-| [`settings.json`](settings.json) | Global Claude Code settings shared by every machine (`auto` mode, `modelSettings`, `hooks`, `enabledPlugins`), everything except `autoMode`. |
+| [`settings.json`](settings.json) | Global Claude Code settings shared by every machine (`auto` mode, `modelSettings`, `hooks`, `enabledPlugins`, and the telemetry opt-outs in `env`), everything except `autoMode`. |
 | [`automode/defaults.json`](automode/defaults.json) | Snapshot of `claude auto-mode defaults`; the built-in slot wording the rendered `environment` starts from. |
 | [`automode/base.json`](automode/base.json) | `autoMode` policy shared by every machine: slot overrides about the user and the repositories, extra `environment` entries, and the `soft_deny` rules. |
 | [`hosts/`](hosts/ai.json) | Optional per-host slot overrides, one `hosts/<short-hostname>.json` each. [`hosts/ai.json`](hosts/ai.json) describes the `ai` workstation (`Host containment`). |
@@ -36,7 +36,7 @@ cd claude-optimization
 - If `claude` isn't logged in, the installer installs the files, then stops with exit code 3 before plugins and verification. Run `claude auth login` and rerun `./install.sh` to finish.
 - Reruns are idempotent: when `~/.claude` already matches, every step reports `Up to date` or `already present` and no backups are made. Changed files are backed up to `*.bak-<timestamp>` before being replaced; a file with the right content but another mode only gets its mode fixed.
 - If a configured marketplace is already known from a different repository or path, the installer stops: remove it with `claude plugin marketplace remove NAME` and rerun.
-- `enabledPlugins` ids ending in `@builtin` (such as `cc-plugin-you-should-know@builtin`, the You Should Know side agent) ship with `claude`; the installer doesn't run `claude plugin install` for them, because the `settings.json` entry is what turns them on. The CLI doesn't validate built-in ids, so check the spelling. You Should Know runs only in first-party sessions with telemetry on.
+- `enabledPlugins` ids ending in `@builtin` (such as `cc-plugin-you-should-know@builtin`, the You Should Know side agent) ship with `claude`; the installer doesn't run `claude plugin install` for them, because the `settings.json` entry is what turns them on. The CLI doesn't validate built-in ids, so check the spelling. You Should Know runs only in first-party sessions with telemetry on; the [telemetry opt-outs](#telemetry) leave usage metrics on for that reason.
 - Plugins from the `claude-optimization` marketplace run at the commit pinned in [`plugins/.claude-plugin/marketplace.json`](plugins/.claude-plugin/marketplace.json). It holds Blast Radius and Replay Theater, two mods from [anthropics/claude-code-playground](https://github.com/anthropics/claude-code-playground/tree/main/claude-code/mods), which is an unsupported playground. To move a pin, review the plugin's code at the new commit, change its `sha`, and rerun `./install.sh`. `claude plugin update` only compares `plugin.json` versions, so the installer uninstalls (keeping plugin data) and reinstalls any plugin whose installed commit differs from its pin. To add a plugin, add its entry there and enable `NAME@claude-optimization` in `settings.json`. A local plugin (a `"source": "./NAME"` entry, files in `plugins/NAME/`) has no pin: the installer mirrors `plugins/NAME/` into `~/.claude/marketplace/NAME/`, removing files that are no longer in the repo, and reinstalls the plugin (keeping its data) whenever the installed copy differs. Bump nothing; editing the files and rerunning `./install.sh` is enough.
 - Session Usage draws one line above the prompt: session cost (the `/cost` total, which includes spend between turns such as cache-tax keepwarm pings), context tokens with a fill bar, each rate-limit window with its reset time, session token totals with the cache-hit share, and the last main turn's model, tokens, cost and duration. Context and limits turn yellow from 75% and red from 90%; segments that don't fit the width drop from the right. `/usage-bar` hides or shows it. It draws below other mods' rows in that band (cache-tax, Replay Theater) instead of replacing them. Costs are API-price estimates, not subscription charges, and token totals restart when Claude Code restarts. Check it with `claude plugin validate plugins/session-usage` and `claude plugin test plugins/session-usage`.
 - Blast Radius holds `rm -r`/`-f`, `git reset --hard`, `git clean`, `git checkout -- .`, force pushes and migrations until you press Proceed (`1`) or Cancel (`2`). It refuses after 10 minutes without an answer, so in headless runs (`claude -p`) those commands are refused. Below about 144 columns it draws in the band above the prompt, which Replay Theater also uses after every turn that edits files, so its buttons may not show there. Use a wide terminal when you rely on it.
@@ -74,6 +74,20 @@ cd claude-optimization
 A pure file copy also works if the home directory is the same on both machines: add `~/.claude/plugins/cache/`, `~/.claude/plugins/marketplaces/`, `~/.claude/plugins/installed_plugins.json` and `~/.claude/plugins/known_marketplaces.json` to the list in step 1 and skip the plugin commands. Those two JSON files also hold absolute paths, so this breaks when the home directory differs.
 
 A manual copy skips the installer's checks: the dependency and defaults-snapshot checks, the `bash-guard.sh` self-test, the pinned-commit check and the `claude auto-mode config` verification. Run `./install.sh` later to get them.
+
+## Telemetry
+
+`settings.json` turns off the Claude Code telemetry that doesn't cost features, through its `env` block:
+
+| Variable | Turns off |
+| :--- | :--- |
+| `DISABLE_ERROR_REPORTING` | Error reports (stack traces of Claude Code's internals) sent to a third-party error tracker. |
+| `DISABLE_FEEDBACK_COMMAND` | `/feedback`, `/bug`, `/share` and Claude-drafted feedback, which upload transcripts. |
+| `CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY` | The "How is Claude doing this session?" survey and its transcript-share follow-up. |
+
+`DISABLE_ERROR_REPORTING` stays on with any value, including `0` or `false`; remove the entry to turn error reporting back on.
+
+Usage metrics (latency, reliability, usage patterns; no code, prompts or file paths) are still sent. `DISABLE_TELEMETRY`, `DO_NOT_TRACK` and `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` would turn them off, but each also stops feature-flag fetching, which turns off You Should Know, Remote Control, the advisor tool, artifact comments, idle compaction and more (see [Features that need feature-flag fetching](https://code.claude.com/docs/en/env-vars#features-that-need-feature-flag-fetching)). Prompts and model output always go to the Claude API, and the WebFetch domain check sends hostnames to `api.anthropic.com` (`skipWebFetchPreflight` turns it off). See [Data usage](https://code.claude.com/docs/en/data-usage#telemetry-services).
 
 ## Adding a Host
 
