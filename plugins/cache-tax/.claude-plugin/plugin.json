@@ -1,9 +1,40 @@
 {
   "name": "cache-tax",
-  "version": "2.3.0",
-  "description": "A Claude Code mod that keeps the one-hour prompt cache warm during breaks and stops a cold send once with its estimated rewrite cost. Warming uses model requests and costs tokens. Requires Claude Code 2.1.287+.",
+  "version": "2.4.0",
+  "description": "A Claude Code mod that keeps the prompt cache warm during breaks and stops a cold send once with its estimated rewrite cost. It works out whether the session's cache lives an hour or five minutes, reports pings in the plan's own terms, and takes options an organization can lock. Warming uses model requests and costs tokens. Requires Claude Code 2.1.299+.",
   "author": {
     "name": "Karan Bansal"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "userConfig": {
+    "guard": {
+      "type": "string",
+      "title": "Cold-send guard",
+      "description": "auto refuses a cold send once on a 1-hour cache and only warns on a 5-minute or unconfirmed one; refuse, warn and off apply everywhere. /cache-tax guard changes it on this machine unless your organization locks it.",
+      "default": "auto",
+      "options": ["auto", "refuse", "warn", "off"]
+    },
+    "keepwarm": {
+      "type": "string",
+      "title": "Keepwarm",
+      "description": "on: /keepwarm, always, and the window opened after a cold write. manual: only windows you arm with /keepwarm. off: no pings.",
+      "default": "on",
+      "options": ["on", "manual", "off"]
+    },
+    "cacheTtl": {
+      "type": "string",
+      "title": "Cache lifetime",
+      "description": "auto works out how long the session's prompt cache lives. 1h or 5m tells cache-tax only; promptCacheTtl sets Claude Code's own. What the session itself shows still wins.",
+      "default": "auto",
+      "options": ["auto", "1h", "5m"]
+    },
+    "stopAtPercent": {
+      "type": "number",
+      "title": "Stop pings at limit %",
+      "description": "Keepwarm holds its pings while any plan or spend limit window is at or above this share.",
+      "default": 95,
+      "min": 1,
+      "max": 100
+    }
+  }
 }
