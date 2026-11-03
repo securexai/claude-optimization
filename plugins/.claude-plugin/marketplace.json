@@ -30,7 +30,7 @@
     {
       "name": "cache-tax",
       "source": "./cache-tax",
-      "description": "Keeps the one-hour prompt cache warm for a window you set (/keepwarm 6h) and stops a cold send once with its estimated rewrite cost. Vendored from karanb192/cache-tax v2.3.0."
+      "description": "Keeps the one-hour prompt cache warm for a window you set (/keepwarm 6h) and stops a cold send once with its estimated rewrite cost. Vendored from karanb192/cache-tax v2.3.1."
     },
     {
       "name": "session-usage",

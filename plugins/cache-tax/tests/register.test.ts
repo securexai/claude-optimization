@@ -1,5 +1,5 @@
 import { describe, expect, mock, test, tier } from 'claude-code/testing'
-import type { TestBody } from 'claude-code/testing'
+import type { Plugin, TestBody } from 'claude-code/testing'
 import type { CommandRunInput, ConfigSetInput, ModelForkResult, On, PromptSubmitInput, RenderPropsOf, SessionStartInput, TurnCompleteInput, TurnUsage } from 'claude-code'
 
 import { statusIcons } from '../hooks/status-icons'
@@ -35,7 +35,7 @@ type ForkAnswer = null | ModelForkResult | { read: number; write: number; out?: 
 
 // The world beneath the mod: its store, the engine's answers, and a fork that
 // replies from a script so each test decides what the cache looked like.
-function world(on: On, forkAnswers: ForkAnswer[], opts: { store?: Map<string, unknown>; commands?: string[]; live?: { tokens?: number }; sid?: string | (() => string); model?: string; bandText?: string; theme?: { value: string }; noColor?: boolean; denyTheme?: boolean; writtenTheme?: string; gate?: () => Promise<void>; steps?: TurnUsage[]; storeGate?: (op: 'get' | 'set' | 'delete', key: string) => Promise<void> } = {}) {
+function world(on: On, forkAnswers: ForkAnswer[], opts: { store?: Map<string, unknown>; commands?: string[]; live?: { tokens?: number }; startedAt?: () => number; sid?: string | (() => string); model?: string | (() => string); bandText?: string; theme?: { value: string }; noColor?: boolean; denyTheme?: boolean; writtenTheme?: string; gate?: () => Promise<void>; steps?: TurnUsage[]; storeGate?: (op: 'get' | 'set' | 'delete', key: string) => Promise<void> } = {}) {
   if (opts.store) {
     const store = opts.store
     // A read takes its value first and is delivered after the gate, as a reply can arrive late.
@@ -56,9 +56,10 @@ function world(on: On, forkAnswers: ForkAnswer[], opts: { store?: Map<string, un
   const logs: string[] = []
   const entered: string[] = []
   on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('session.end', ($, e) => ({ sessionId: e.sessionId }))
   on('session.id', () => ({ value: typeof opts.sid === 'function' ? opts.sid() : opts.sid ?? 'S1' }))
-  on('session.model', () => ({ value: opts.model ?? 'claude-fable-5-1' }))
-  on('session.usage', () => ({ value: { startedAt: START, context: { window: 1000000, tokens: opts.live?.tokens }, rateLimits: [] } }))
+  on('session.model', () => ({ value: (typeof opts.model === 'function' ? opts.model() : opts.model) ?? 'claude-fable-5-1' }))
+  on('session.usage', () => ({ value: { startedAt: opts.startedAt?.() ?? START, context: { window: 1000000, tokens: opts.live?.tokens }, rateLimits: [] } }))
   on('command.register', ($, e) => ({ value: { command: e.name } }))
   on('command.list', () => ({ value: (opts.commands ?? []).map(name => ({ name, description: '', source: 'plugin' as const })) }))
   on('turn.complete', ($, e) => ({ text: e.answer }))
@@ -211,7 +212,7 @@ describe('cache indicator', () => {
     const w = world(on, [], { store: new Map([['deadline:S1', 13 * HOUR]]) })
     await $.session.start({ ...session, surface: 'terminal', isInteractive: true })
     const ui = await $.ui.mount({ plugin: 'cache-tax', surface: 'terminal', component: 'AbovePrompt', props: bandProps })
-    await $.classic.SessionStart({ source: 'resume', seconds_since_last_response: 7200, context_tokens: 200000, prompt_cache_likely_expired: true })
+    await $.classic.SessionStart({ session_id: 'S1', source: 'resume', seconds_since_last_response: 7200, context_tokens: 200000, prompt_cache_likely_expired: true })
     expect((await ui.find({ type: 'Text', text: /^(warm|cold|unknown|stopped)$/ }))?.props.color).toBe('#d97757')
     await $.session.compact({ trigger: 'manual', messages: [{ role: 'user', text: 'summary', toolUses: [] }] })
     expect((await ui.find({ type: 'Text', text: /^(warm|cold|unknown|stopped)$/ }))?.props.color).toBe(undefined)
@@ -245,7 +246,7 @@ describe('cache indicator', () => {
     const clock = mock.clock(on, { now: 10 * HOUR })
     const w = world(on, [nothing], { store: new Map<string, unknown>([['deadline:S1', 13 * HOUR]]) })
     await $.session.start({ ...session, surface: 'terminal', isInteractive: true })
-    await $.classic.SessionStart({ source: 'resume', seconds_since_last_response: 30 * 60, context_tokens: 200000 })
+    await $.classic.SessionStart({ session_id: 'S1', source: 'resume', seconds_since_last_response: 30 * 60, context_tokens: 200000 })
     const ui = await $.ui.mount({ plugin: 'cache-tax', surface: 'terminal', component: 'AbovePrompt', props: bandProps })
     expect((await ui.find({ type: 'Text', text: /^(warm|cold|unknown|stopped)$/ }))?.props.color).toBe('success')
     await $.turn.complete(turn({ agentId: 'worker' }))
@@ -1007,7 +1008,7 @@ describe('ping failures', () => {
     const store = new Map<string, unknown>([['deadline:S1', 13 * HOUR]])
     const w = world(on, [{ isAnswered: false, reason: 'nothing-to-fork' }, warm], { store })
     await $.session.start(session)
-    await $.classic.SessionStart({ source: 'resume', seconds_since_last_response: 40 * 60, context_tokens: 200000 })
+    await $.classic.SessionStart({ session_id: 'S1', source: 'resume', seconds_since_last_response: 40 * 60, context_tokens: 200000 })
     await clock.advance(10 * MIN)
     expect(w.forks.length).toBe(1)
     expect(w.status.at(-1)).toBe('keepwarm 2h50m left · nothing to fork yet, first ping after the next turn')
@@ -1500,15 +1501,15 @@ describe('/clear overlapping /keepwarm', () => {
     releaseClear()
     await clearing
     await settle()
-    // /clear cancelled the window's timer in its reset, so it must set a new one: the wake at the deadline,
-    // since the new conversation has no request yet.
-    expect(timers.length).toBe(beforeClearEnds + 1)
+    // /clear reset the state before it first awaited, so the window armed meanwhile kept its timer: the wake at the
+    // deadline, since the new conversation has no request yet. Nothing is cancelled or set again when /clear ends.
+    expect(timers.length).toBe(beforeClearEnds)
     expect(waits.at(-1)).toBe(6 * HOUR)
     // A wakes, finds the schedule changed and a timer in place, and sends nothing.
     releaseA()
     await settle()
     expect(w.forks.length).toBe(0)
-    expect(timers.length).toBe(beforeClearEnds + 1)
+    expect(timers.length).toBe(beforeClearEnds)
     // The first turn of the new conversation starts the pings as usual.
     await $.turn.complete(turn())
     now += 50 * MIN
@@ -1847,5 +1848,439 @@ describe('/keepwarm off while a turn is running', () => {
     for await (const c of $.turn.step({ turnId: 'comeback', index: 0, model: 'claude-fable-5-1', messageCount: 3 })) void c
     await $.turn.complete(turn({ usage: usage({ cache_read_input_tokens: 0, cache_creation_input_tokens: 200000 }) }))
     expect(store.get('deadline:S1')).toBe(START + 2 * HOUR + 3 * HOUR)
+  })
+})
+
+describe('a managed plugin above the user tier', () => {
+  // Team and Enterprise accounts seat a builtin plugin at the prepend tier whose classic.* and session.compact hooks
+  // continue beneath the user tier, so the mod's own hooks on those events never run.
+  const managed: Plugin = {
+    name: 'managed-sec',
+    tier: 'prepend',
+    register(on) {
+      on('classic.SessionStart', ($, e, next) => next.to(e, 'append'))
+      on('session.compact', ($, e, next) => next.to(e, 'append'))
+    },
+  }
+  const end = ($: Parameters<TestBody>[0], sessionId: string, reason: 'clear' | 'resume' = 'clear') => $.session.end({ reason, sessionId, resume: { id: sessionId } })
+  const step = async ($: Parameters<TestBody>[0], turnId: string, index: number, messageCount: number) => {
+    for await (const c of $.turn.step({ turnId, index, model: 'claude-fable-5-1', messageCount })) void c
+  }
+
+  test('/clear reaches the mod through session.end: keepwarm stops, the tally empties and the new id is used', { plugins: [managed] }, async ($, on) => {
+    const clock = mock.clock(on, { now: START })
+    const store = new Map<string, unknown>()
+    let sid = 'S1'
+    let started = START
+    const w = world(on, [warm], { store, sid: () => sid, startedAt: () => started })
+    await $.session.start(session)
+    await $.turn.complete(turn())
+    await clock.advance(2 * HOUR)
+    await $.prompt.submit(prompt('hi'))
+    await $.prompt.submit(prompt('hi'))
+    await $.turn.complete(turn({ usage: usage({ cache_read_input_tokens: 0, cache_creation_input_tokens: 200000 }) }))
+    expect(store.get('deadline:S1')).toBe(START + 5 * HOUR)
+    await end($, 'S1')
+    sid = 'S2'
+    started = clock.now()
+    await $.classic.SessionStart({ source: 'clear' })
+    expect(store.has('deadline:S1')).toBe(false)
+    expect(w.status.at(-1)).toBe(undefined)
+    await clock.advance(50 * MIN)
+    expect(w.forks.length).toBe(0)
+    const card = (await $.command.run(run('cache-tax', ''))).text
+    expect(card).toMatch(/state       no request yet this session/)
+    expect(card).toMatch(/session     0 cold writes paid/)
+    await $.command.run(run('keepwarm', '2h'))
+    expect(store.get('deadline:S2')).toBe(START + 4 * HOUR + 50 * MIN)
+    expect(store.has('deadline:S1')).toBe(false)
+  })
+
+  test('always after /clear arms the new conversation under its own id', { plugins: [managed] }, async ($, on) => {
+    const clock = mock.clock(on, { now: START })
+    const store = new Map<string, unknown>([['always', true]])
+    let sid = 'S1'
+    let started = START
+    const w = world(on, [warm], { store, sid: () => sid, startedAt: () => started })
+    await $.session.start(session)
+    await $.turn.complete(turn())
+    await end($, 'S1')
+    sid = 'S2'
+    started = clock.now()
+    await $.classic.SessionStart({ source: 'clear' })
+    expect(store.has('deadline:S1')).toBe(false)
+    await $.prompt.submit(prompt('hello'))
+    expect(store.get('deadline:S2')).toBe(START + 6 * HOUR)
+    expect(w.status.at(-1)).toBe('keepwarm 6h00m left · waiting for the first turn')
+    await $.turn.complete(turn())
+    await clock.advance(50 * MIN)
+    expect(w.forks.length).toBe(1)
+    expect(store.has('deadline:S1')).toBe(false)
+  })
+
+  test('a /clear delivered twice, through session.end and the classic start, arms always once', async ($, on) => {
+    const clock = mock.clock(on, { now: START })
+    const store = new Map<string, unknown>([['always', true]])
+    let sid = 'S1'
+    let started = START
+    let sets = 0
+    const w = world(on, [warm], { store, sid: () => sid, startedAt: () => started, storeGate: async (op, key) => { if (op === 'set' && key === 'deadline:S2') sets++ } })
+    await $.session.start(session)
+    await $.turn.complete(turn())
+    await end($, 'S1')
+    sid = 'S2'
+    started = clock.now()
+    await $.classic.SessionStart({ source: 'clear' })
+    expect(sets).toBe(1)
+    expect(store.has('deadline:S1')).toBe(false)
+    expect(store.get('deadline:S2')).toBe(START + 6 * HOUR)
+    expect(w.status.at(-1)).toBe('keepwarm 6h00m left · waiting for the first turn')
+    await $.prompt.submit(prompt('hi'))
+    expect(sets).toBe(1)
+    // The end of a conversation already left changes nothing.
+    await end($, 'S1')
+    expect(store.get('deadline:S2')).toBe(START + 6 * HOUR)
+    await $.turn.complete(turn())
+    await clock.advance(50 * MIN)
+    expect(w.forks.length).toBe(1)
+  })
+
+  test('a resumed session whose fields never arrive warns once with the price instead of refusing', { plugins: [managed] }, async ($, on) => {
+    mock.clock(on, { now: START + 3 * HOUR })
+    const w = world(on, [], { live: { tokens: 200000 } })
+    await $.session.start(session)
+    await $.classic.SessionStart({ session_id: 'S1', source: 'resume', seconds_since_last_response: 7200, context_tokens: 200000, prompt_cache_likely_expired: true })
+    expect(w.logs).toEqual([])
+    expect((await $.command.run(run('cache-tax', ''))).text).toMatch(/state       unknown, resumed without the time of its last response/)
+    expect((await $.prompt.submit(prompt('hi'))).drop).toBe(undefined)
+    expect(w.entered).toEqual(['hi'])
+    expect(w.logs).toEqual(['resumed with up to 200,000 tokens of context and no time of its last response, so the cache may be cold. If it is, this message re-writes them at $20/MTok = $4.00.'])
+    await $.prompt.submit(prompt('again'))
+    expect(w.logs.length).toBe(1)
+    // The write it paid is still scored off the context the engine reported.
+    await $.turn.complete(turn({ usage: usage({ cache_read_input_tokens: 0, cache_creation_input_tokens: 200000 }) }))
+    expect(w.logs.at(-1)).toMatch(/^cold write of 200k tokens paid \(\$4\.00\)/)
+  })
+
+  test('a session first launched under an hour ago cannot be cold, so nothing is said', { plugins: [managed] }, async ($, on) => {
+    mock.clock(on, { now: START + 30 * MIN })
+    const w = world(on, [], { live: { tokens: 200000 } })
+    await $.session.start(session)
+    await $.classic.SessionStart({ session_id: 'S1', source: 'resume', seconds_since_last_response: 1800, context_tokens: 200000 })
+    await $.prompt.submit(prompt('hi'))
+    expect(w.logs).toEqual([])
+    expect((await $.command.run(run('cache-tax', ''))).text).toMatch(/state       no request yet this session/)
+  })
+
+  test('a resumed transcript too young to be cold is warned about once it is old enough', { plugins: [managed] }, async ($, on) => {
+    const clock = mock.clock(on, { now: START + 30 * MIN })
+    const w = world(on, [], { live: { tokens: 200000 } })
+    await $.session.start(session)
+    await $.classic.SessionStart({ session_id: 'S1', source: 'resume', seconds_since_last_response: 1800, context_tokens: 200000 })
+    expect((await $.command.run(run('cache-tax', ''))).text).toMatch(/state       resumed without the time of its last response, warm for up to 30m more/)
+    await clock.advance(HOUR)
+    expect((await $.command.run(run('cache-tax', ''))).text).toMatch(/state       unknown, resumed without the time of its last response/)
+    await $.prompt.submit(prompt('hi'))
+    expect(w.logs.length).toBe(1)
+    expect(w.logs[0]).toMatch(/^resumed with up to 200,000 tokens/)
+  })
+
+  test('with the resume fields delivered the guard prices the cold send and nothing is said twice', async ($, on) => {
+    mock.clock(on, { now: START + 3 * HOUR })
+    const w = world(on, [], { live: { tokens: 200000 } })
+    await $.session.start(session)
+    await $.classic.SessionStart({ session_id: 'S1', source: 'resume', seconds_since_last_response: 7200, context_tokens: 200000, prompt_cache_likely_expired: true })
+    expect(w.logs.length).toBe(1)
+    expect(w.logs[0]).toMatch(/^resuming cold/)
+    expect((await $.prompt.submit(prompt('hi'))).drop).toMatch(/went cold 1h00m ago/)
+    expect(w.logs.length).toBe(1)
+  })
+
+  test('an in-process resume moves the guard to the new transcript and keeps the window', { plugins: [managed] }, async ($, on) => {
+    const clock = mock.clock(on, { now: START })
+    const store = new Map<string, unknown>()
+    let sid = 'S1'
+    let started = START
+    const live = { tokens: 200000 }
+    const w = world(on, [], { store, sid: () => sid, startedAt: () => started, live })
+    await $.session.start(session)
+    await $.turn.complete(turn())
+    await clock.advance(2 * HOUR)
+    await $.command.run(run('keepwarm', '3h'))
+    await end($, 'S1', 'resume')
+    sid = 'S2'
+    started = clock.now() - 30 * MIN
+    live.tokens = 80000
+    await $.classic.SessionStart({ session_id: 'S2', source: 'resume', seconds_since_last_response: 1800, context_tokens: 80000 })
+    expect((await $.prompt.submit(prompt('hi'))).drop).toBe(undefined)
+    expect(w.logs).toEqual([])
+    expect(w.status.at(-1)).toBe('keepwarm 3h00m left · waiting for the first turn')
+    const card = (await $.command.run(run('cache-tax', ''))).text
+    expect(card).toMatch(/context     80,000 tokens/)
+    expect(card).toMatch(/session     0 cold writes paid/)
+  })
+
+  test('a restored window arms at session.start without the classic event', { plugins: [managed] }, async ($, on) => {
+    const clock = mock.clock(on, { now: START })
+    const store = new Map<string, unknown>([['deadline:S1', START + 10 * MIN]])
+    const w = world(on, [], { store })
+    await $.session.start(session)
+    await $.classic.SessionStart({ session_id: 'S1', source: 'startup' })
+    expect(w.status.at(-1)).toBe('keepwarm 10m left · waiting for the first turn')
+    await clock.advance(10 * MIN)
+    expect(w.status.at(-1)).toBe(undefined)
+    expect(store.has('deadline:S1')).toBe(false)
+  })
+
+  test('the classic start arriving after session.start leaves one timer and one ping', async ($, on) => {
+    const clock = mock.clock(on, { now: START })
+    const store = new Map<string, unknown>([['deadline:S1', START + 3 * HOUR]])
+    const w = world(on, [warm, warm], { store })
+    await $.session.start(session)
+    await $.classic.SessionStart({ session_id: 'S1', source: 'startup' })
+    await $.turn.complete(turn())
+    await clock.advance(50 * MIN)
+    expect(w.forks.length).toBe(1)
+    await clock.advance(50 * MIN)
+    expect(w.forks.length).toBe(2)
+  })
+
+  test('a compaction that never reaches the mod is read off the next request\'s shorter transcript', { plugins: [managed] }, async ($, on) => {
+    mock.clock(on, { now: START })
+    const w = world(on, [])
+    await $.session.start(session)
+    await step($, 'first', 0, 40)
+    await $.turn.complete(turn())
+    await $.session.compact({ trigger: 'auto', messages: [{ role: 'user', text: 'summary', toolUses: [] }] })
+    await step($, 'after', 0, 3)
+    expect((await $.command.run(run('cache-tax', ''))).text).toMatch(/state       reset by compaction/)
+    await $.turn.complete(turn({ usage: usage({ cache_read_input_tokens: 0, cache_creation_input_tokens: 150000 }) }))
+    expect(w.logs).toEqual([])
+    expect(w.status.at(-1)).toBe(undefined)
+    expect((await $.command.run(run('cache-tax', ''))).text).toMatch(/session     0 cold writes paid/)
+  })
+
+  test('a summary written after a warm request in the same turn is no cold write', { plugins: [managed] }, async ($, on) => {
+    mock.clock(on, { now: START })
+    const w = world(on, [], { steps: [usage(), usage(), usage({ cache_read_input_tokens: 0, cache_creation_input_tokens: 150000 })] })
+    await $.session.start(session)
+    await step($, 'first', 0, 40)
+    await $.turn.complete(turn())
+    await step($, 'long', 0, 42)
+    await $.session.compact({ trigger: 'auto', messages: [{ role: 'user', text: 'summary', toolUses: [] }] })
+    await step($, 'long', 1, 3)
+    await $.turn.complete(turn({ usage: usage({ cache_read_input_tokens: 200000, cache_creation_input_tokens: 150500 }) }))
+    expect(w.logs).toEqual([])
+    expect(w.status.at(-1)).toBe(undefined)
+    expect((await $.command.run(run('cache-tax', ''))).text).toMatch(/session     0 cold writes paid/)
+  })
+
+  test('a rewind of a few messages is not a compaction', async ($, on) => {
+    mock.clock(on, { now: START })
+    world(on, [])
+    await $.session.start(session)
+    await step($, 'first', 0, 40)
+    await $.turn.complete(turn())
+    await step($, 'rewound', 0, 38)
+    expect((await $.command.run(run('cache-tax', ''))).text).toMatch(/state       warm/)
+  })
+
+  test('a cold write and a compaction in the same turn still score the write', async ($, on) => {
+    const clock = mock.clock(on, { now: START })
+    const w = world(on, [], { steps: [usage(), usage({ cache_read_input_tokens: 0, cache_creation_input_tokens: 200000 }), usage({ cache_read_input_tokens: 0, cache_creation_input_tokens: 10000 })] })
+    await $.session.start(session)
+    await step($, 'first', 0, 40)
+    await $.turn.complete(turn())
+    await clock.advance(2 * HOUR)
+    await step($, 'comeback', 0, 42)
+    await step($, 'comeback', 1, 3)
+    await $.turn.complete(turn({ usage: usage({ cache_read_input_tokens: 0, cache_creation_input_tokens: 210000 }) }))
+    expect(w.logs.at(-1)).toMatch(/^cold write of 200k tokens paid \(\$4\.00\)/)
+  })
+
+  test('a classic clear after a command already seated the new conversation leaves its window alone', async ($, on) => {
+    mock.clock(on, { now: START })
+    const store = new Map<string, unknown>([['always', true]])
+    let sid = 'S1'
+    const w = world(on, [], { store, sid: () => sid })
+    await $.session.start(session)
+    await $.turn.complete(turn())
+    await end($, 'S1')
+    sid = 'S2'
+    await $.command.run(run('keepwarm', '2h'))
+    expect(store.get('deadline:S2')).toBe(START + 2 * HOUR)
+    await $.classic.SessionStart({ session_id: 'S2', source: 'clear' })
+    expect(store.get('deadline:S2')).toBe(START + 2 * HOUR)
+    expect(w.status.at(-1)).toBe('keepwarm 2h00m left · waiting for the first turn')
+  })
+
+  test('a model switched at an in-process resume prices the new transcript', { plugins: [managed] }, async ($, on) => {
+    mock.clock(on, { now: START + 3 * HOUR })
+    let sid = 'S1'
+    let model = 'claude-fable-5-1'
+    const w = world(on, [], { sid: () => sid, model: () => model, live: { tokens: 200000 } })
+    await $.session.start(session)
+    await $.turn.complete(turn())
+    await end($, 'S1', 'resume')
+    sid = 'S2'
+    model = 'claude-haiku-5-5'
+    await $.classic.SessionStart({ session_id: 'S2', source: 'resume', seconds_since_last_response: 7200, context_tokens: 200000, prompt_cache_likely_expired: true })
+    await $.prompt.submit(prompt('hi'))
+    expect(w.logs.at(-1)).toBe('resumed with up to 200,000 tokens of context and no time of its last response, so the cache may be cold. If it is, this message re-writes them at $1/MTok = $0.20.')
+    expect((await $.command.run(run('cache-tax', ''))).text).toMatch(/^claude-haiku-5-5\n/)
+  })
+
+  test('a classic resume ahead of the old conversation\'s end keeps the seeded clock', async ($, on) => {
+    const clock = mock.clock(on, { now: START })
+    let sid = 'S1'
+    const w = world(on, [], { sid: () => sid, live: { tokens: 200000 } })
+    await $.session.start(session)
+    await $.turn.complete(turn())
+    await clock.advance(3 * HOUR)
+    sid = 'S2'
+    await $.classic.SessionStart({ session_id: 'S2', source: 'resume', seconds_since_last_response: 7200, context_tokens: 200000, prompt_cache_likely_expired: true })
+    expect(w.logs.at(-1)).toMatch(/^resuming cold/)
+    await end($, 'S1', 'resume')
+    expect((await $.prompt.submit(prompt('hi'))).drop).toMatch(/went cold 1h00m ago/)
+    expect(w.logs.length).toBe(1)
+  })
+
+  test('a window carried through a resume moves to the new id, so off and the old session find the right keys', { plugins: [managed] }, async ($, on) => {
+    mock.clock(on, { now: START })
+    const store = new Map<string, unknown>()
+    let sid = 'S1'
+    world(on, [], { store, sid: () => sid })
+    await $.session.start(session)
+    await $.turn.complete(turn())
+    await $.command.run(run('keepwarm', '3h every 2m'))
+    expect(store.get('deadline:S1')).toBe(START + 3 * HOUR)
+    await end($, 'S1', 'resume')
+    sid = 'S2'
+    await $.prompt.submit(prompt('hi'))
+    expect([...store.keys()].sort()).toEqual(['deadline:S2', 'every:S2'])
+    expect(store.get('deadline:S2')).toBe(START + 3 * HOUR)
+    expect(store.get('every:S2')).toBe(2 * MIN)
+    await $.command.run(run('keepwarm', 'off'))
+    expect([...store.keys()]).toEqual([])
+  })
+
+  const settle = () => new Promise<void>(r => { (globalThis as unknown as { setTimeout(fn: () => void, ms: number): unknown }).setTimeout(r, 20) })
+  // Holds every delete of one key until released, in order, so two ends of the same conversation can be interleaved.
+  const holdDeletes = (key: string) => {
+    const waiting: Array<() => void> = []
+    return {
+      gate: async (op: 'get' | 'set' | 'delete', k: string) => { if (op === 'delete' && k === key) await new Promise<void>(r => { waiting.push(r) }) },
+      release: () => waiting.shift()?.(),
+      held: () => waiting.length,
+    }
+  }
+
+  test('a session.end that lands while the classic resume is still deleting the old keys cannot wipe the seeded clock', async ($, on) => {
+    const clock = mock.clock(on, { now: START })
+    let sid = 'S1'
+    const held = holdDeletes('deadline:S1')
+    const w = world(on, [], { store: new Map<string, unknown>(), sid: () => sid, live: { tokens: 200000 }, storeGate: held.gate })
+    await $.session.start(session)
+    await $.turn.complete(turn())
+    await clock.advance(3 * HOUR)
+    sid = 'S2'
+    const resuming = $.classic.SessionStart({ session_id: 'S2', source: 'resume', seconds_since_last_response: 7200, context_tokens: 200000, prompt_cache_likely_expired: true })
+    await settle()
+    expect(held.held()).toBe(1)
+    const ending = end($, 'S1', 'resume')
+    await settle()
+    held.release()
+    await resuming
+    held.release()
+    await ending
+    expect(w.logs.length).toBe(1)
+    expect(w.logs[0]).toMatch(/^resuming cold/)
+    expect((await $.prompt.submit(prompt('hi'))).drop).toMatch(/went cold 1h00m ago/)
+    expect(w.logs.length).toBe(1)
+  })
+
+  test('an end cut short in its store cleanup has already dropped the old timer and id', { plugins: [managed] }, async ($, on) => {
+    const clock = mock.clock(on, { now: START })
+    const store = new Map<string, unknown>()
+    let sid = 'S1'
+    const held = holdDeletes('deadline:S1')
+    const w = world(on, [warm], { store, sid: () => sid, storeGate: held.gate })
+    await $.session.start(session)
+    await $.turn.complete(turn())
+    await $.command.run(run('keepwarm', '3h'))
+    const ending = end($, 'S1', 'resume')
+    await settle()
+    expect(held.held()).toBe(1)
+    sid = 'S2'
+    // The old conversation's ping is due while its end is still waiting on the store; the transcript it would fork is gone.
+    await clock.advance(50 * MIN)
+    expect(w.forks.length).toBe(0)
+    await $.prompt.submit(prompt('hi'))
+    expect(store.get('deadline:S2')).toBe(START + 3 * HOUR)
+    held.release()
+    await ending
+    expect(store.has('deadline:S1')).toBe(false)
+  })
+
+  test('a /keepwarm while the old conversation is still ending waits for the host to report the next id', { plugins: [managed] }, async ($, on) => {
+    mock.clock(on, { now: START })
+    const store = new Map<string, unknown>()
+    let sid = 'S1'
+    let model = 'claude-fable-5-1'
+    const held = holdDeletes('deadline:S1')
+    const w = world(on, [], { store, sid: () => sid, model: () => model, storeGate: held.gate })
+    await $.session.start(session)
+    await $.turn.complete(turn())
+    await $.command.run(run('keepwarm', '1h'))
+    const ending = end($, 'S1')
+    await settle()
+    expect(held.held()).toBe(1)
+    // The host still answers the old id: the window waits in memory, nothing is written under that id.
+    expect((await $.command.run(run('keepwarm', '2h'))).text).toMatch(/^keepwarm on for 2h00m/)
+    expect(store.get('deadline:S1')).toBe(START + HOUR)
+    held.release()
+    await ending
+    expect(store.size).toBe(0)
+    sid = 'S2'
+    model = 'claude-haiku-5-5'
+    await $.prompt.submit(prompt('hi'))
+    expect([...store.keys()]).toEqual(['deadline:S2'])
+    expect(store.get('deadline:S2')).toBe(START + 2 * HOUR)
+    expect(w.status.at(-1)).toBe('keepwarm 2h00m left · waiting for the first turn')
+    expect((await $.command.run(run('cache-tax', ''))).text).toMatch(/^claude-haiku-5-5\n/)
+  })
+
+  test('a guarded cold send compacted before its first request pays the summary, not a cold write', { plugins: [managed] }, async ($, on) => {
+    const clock = mock.clock(on, { now: START })
+    const w = world(on, [], { steps: [usage(), usage({ cache_read_input_tokens: 0, cache_creation_input_tokens: 150000 })] })
+    await $.session.start(session)
+    await step($, 'first', 0, 40)
+    await $.turn.complete(turn())
+    await clock.advance(2 * HOUR)
+    expect((await $.prompt.submit(prompt('hi'))).drop).toMatch(/^cache-tax:/)
+    await $.prompt.submit(prompt('hi'))
+    await $.session.compact({ trigger: 'auto', messages: [{ role: 'user', text: 'summary', toolUses: [] }] })
+    await step($, 'comeback', 0, 3)
+    await $.turn.complete(turn({ usage: usage({ cache_read_input_tokens: 0, cache_creation_input_tokens: 150000 }) }))
+    expect(w.logs).toEqual([])
+    expect(w.status.at(-1)).toBe(undefined)
+    expect((await $.command.run(run('cache-tax', ''))).text).toMatch(/session     0 cold writes paid/)
+  })
+
+  test('a second compaction in one turn does not turn the first summary into a cold write', { plugins: [managed] }, async ($, on) => {
+    mock.clock(on, { now: START })
+    const summary = usage({ cache_read_input_tokens: 0, cache_creation_input_tokens: 120000 })
+    const w = world(on, [], { steps: [usage(), usage(), summary, usage(), summary] })
+    await $.session.start(session)
+    await step($, 'first', 0, 40)
+    await $.turn.complete(turn())
+    await step($, 'long', 0, 42)
+    await step($, 'long', 1, 3)
+    await step($, 'long', 2, 15)
+    await step($, 'long', 3, 3)
+    await $.turn.complete(turn({ usage: usage({ cache_read_input_tokens: 200000, cache_creation_input_tokens: 241000 }) }))
+    expect(w.logs).toEqual([])
+    expect(w.status.at(-1)).toBe(undefined)
+    expect((await $.command.run(run('cache-tax', ''))).text).toMatch(/session     0 cold writes paid/)
   })
 })
