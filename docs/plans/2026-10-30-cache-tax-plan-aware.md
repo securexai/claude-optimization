@@ -1,6 +1,6 @@
 # cache-tax 2.4.0: correct on every Claude plan
 
-Record state: ACTIVE
+Record state: CANCELED
 
 ## Approved baseline
 
@@ -50,7 +50,7 @@ Record state: ACTIVE
 | T05 | Part 4: userConfig options with lock precedence, `/cache-tax ttl`, identity, tests; T02 | ✅ DONE | G01, G02, G03 | None |
 | T06 | Part 5: plugin README, `plugin.json` 2.4.0, `marketplace.json`, repo README; T02–T05 | ✅ DONE | G01, G09 | None |
 | T07 | Live checks on this workstation; T02–T05 | ✅ DONE | G04, G05 | None |
-| T08 | Work-login checklist delivered for the user to run; T06 | 🔄 IN_PROGRESS | G06 | Checklist delivered (Handoff); the user runs it on the work login |
+| T08 | Work-login checklist delivered for the user to run; T06 | 🔄 IN_PROGRESS | G06 | The user runs G06 step 5 interactively on dsn |
 | T09 | Optional idle-compaction interplay test (needs approval); T07 | ⬜ TODO | G07 | Ask the user |
 | T10 | Install 2.4.0 with `./install.sh` (needs approval); T06, T07 | ✅ DONE | G08 | None (approved 2026-10-30: "Install, commit and push") |
 | T11 | Review fixes, lifetime inference and pings: A1, A3, A4, A7, A8, A9 (per-model evidence, two observations for 5m, explained misses, latch resets, first-exchange pings, `/effort`); T02 | ✅ DONE | G01, G02, G03, G10 | None |
@@ -74,7 +74,7 @@ Record state: ACTIVE
 | G03 | `npx -p typescript tsc -p plugins/cache-tax` exits 0 with no errors | ✅ PASS | G03 attempt 4 |
 | G04 | Live, Pro/Max: `/cache-tax` shows `ttl 1h` with reason subscription and the 5h/7d windows; `/keepwarm 1h every 1m` gives a receipt with Δ$ and Δ%; `/keepwarm off` | ✅ PASS | G04 attempt 3 |
 | G05 | Live, `FORCE_PROMPT_CACHING_5M=1`: card `ttl 5m`; bare `/keepwarm` refused with the fix; a send after more than 5 minutes idle on a 50K+ context warns at the 5m rate; no fork sent | ✅ PASS | G05 attempt 3 |
-| G06 | User runs the work-login checklist: guard note, card wording, no stale refusal after `/clear`, whether 5h/7d windows show, `/cache-tax ttl 1h` arms without confirmation | ⬜ NOT_RUN | Pending |
+| G06 | User runs the work-login checklist: guard note, card wording, no stale refusal after `/clear`, whether 5h/7d windows show, `/cache-tax ttl 1h` arms without confirmation | 🔄 IN_PROGRESS | G06 attempt 2 (steps 1–4, 7 pass; 6 N/A; 5 open, interactive only) |
 | G07 | Optional: a 200K+ context; does a ping at 50m defer idle compaction at about 54m (needs approval) | ⬜ NOT_RUN | Pending |
 | G08 | `./install.sh` twice: installs 2.4.0; the second run reports everything up to date with no new `.bak` (needs approval) | ✅ PASS | G08 attempt 1 |
 | G09 | Docs review: every changed README statement matches the code and tests; links resolve; matrix sources cited | ✅ PASS | G09 attempt 3 |
@@ -339,6 +339,30 @@ A new session (the T18–T20 report pasted after `/clear`) reran the automated g
 - After both runs: `claude plugin list` shows `cache-tax@claude-optimization` Version 2.4.0, enabled. `diff -rq` against `plugins/cache-tax` (excluding `types/`) finds no difference.
 - Status: PASS.
 
+### G06 attempt 1, 2026-11-03
+
+- Source: a `/cache-tax` card the user pasted from Claude Code in WSL on the work machine (dsn), Enterprise claude.ai login, model `claude-sonnet-5-5`, 47,720 tokens of context. Observed by the user; not run from this workstation. The installed version wasn't shown; the card's wording matches 2.4.0's strings (`register.ts` lines 333, 944, 988).
+- Step 2: `hooks` line reads "this mod sees /clear and resume only through session.end here, as a user mod on an organization login or a managed machine; no resume warning. An admin can install it as an organization mod". As expected.
+- Step 3: `plan` line reads "no limit windows visible to this mod; dollars at list prices". So an Enterprise seat shows no 5h/7d windows and never gets the subscription default.
+- Step 4, first half: `cache` line reads "lifetime not confirmed (no plan limits are visible to this mod, as on a Team or Enterprise login, an API key or a cloud provider)". `guard` reads "auto: warn only"; `keepwarm` off. `/cache-tax ttl 1h` and `/keepwarm 90m` not yet run.
+- Step 1 (the `/plugin` guard note), steps 5–7: not run. A note the user pasted alongside mentions "the earlier notice", but its text wasn't seen, so step 1 stays open.
+- Status: IN_PROGRESS.
+
+### G06 attempt 2, 2026-11-03
+
+- Method: from the Windows workstation, scripts run with `wsl.exe -d dsn -- bash -l <script>` in `$HOME` (`/home/cloudops`), the Enterprise login. Scripts: `dsn-check.sh`, `dsn-g06.sh`, `dsn-note.sh` in that session's scratchpad. Mod commands sent with `claude -p "/…"`, each a fresh session.
+- Install: Claude Code 2.1.317; `cache-tax@claude-optimization` 2.4.0, user scope, enabled, read from `~/.claude/marketplace/cache-tax` (installed 2026-11-03T17:16Z). `diff -rq --strip-trailing-cr` against this repo's `plugins/cache-tax` (excluding `types/`): no content differences; only Windows `:Zone.Identifier` files extra, harmless.
+- On dsn: `claude plugin validate .` ✔ Validation passed; `claude plugin test .` 228 pass, 0 fail.
+- Step 4: `/cache-tax ttl 1h` → "Now: lives 1 hour (set with /cache-tax ttl)"; `/keepwarm 90m` → "keepwarm on for 1h30m, a ping 50m after each idle stretch …", with no confirmation asked. Card then: `cache lives 1 hour (set with /cache-tax ttl)`, `guard auto: refuse once on this 1-hour cache`. PASS. Restored afterwards: `/keepwarm off`, `/cache-tax ttl auto` → "detects the lifetime again … lifetime not confirmed".
+- Step 6: dsn has no `/etc/claude-code`, so no managed cache-tax options and the card has no `options` line. N/A on this machine.
+- Step 7: done by the restore above.
+- Step 1: `claude plugin list --json` carries no guard note; only the interactive `/plugin` screen shows it. Open.
+- Step 5: needs an interactive session idle more than an hour, then `/clear` and a message. Open.
+- Status: IN_PROGRESS (steps 1 and 5 open).
+- Step 1, follow-up the user pasted from interactive `/plugin` on dsn: the list shows `✔ cache-tax  Plugin  claude-optimization` under User, with no note on the list row. The plugin's detail view is not yet seen.
+- Step 1, detail view the user pasted (cache-tax @ claude-optimization, 2.4.0, user scope, Enabled; header "3 mods active · cache-tax, blast-radius, session-usage"): "1 note: Its hooks on classic.SessionStart, classic.PreModelSwitch, classic.PostModelSwitch, session.compact do not run here: where an organization manages Claude Code, these events pass over the plugins you install → Only a plugin that counts as your organization's own runs hooks on these events. An administrator sets that up in managed settings". Matches the checklist and the plugin README's "In an organization". PASS.
+- Status after this: IN_PROGRESS; only step 5 is open.
+
 ## Decisions and scope changes
 
 - G00: 2.1.314 still gives mods no cache TTL, expiry or overage, so part 1's inference is built as planned. `modelPricing` is read with `{ key: 'modelPricing', source: 'policy' }`, so only the managed value counts, as in the engine.
@@ -378,6 +402,7 @@ A new session (the T18–T20 report pasted after `/clear`) reran the automated g
     - After a model switch, the guard quoted the table rate beside Claude Code's estimate (`at $4/MTok = $0.50` for 200k tokens). It now gives the estimate alone.
     - `/keepwarm always`, confirmed on an unconfirmed lifetime, replied that every session stays warm. The reply now says only this session's window has the go-ahead.
     - Rates scaled by a managed multiplier printed raw (the review's K22, e.g. `$14.374999999999998/MTok` at 1.15). They now print to six significant figures.
+- 2026-11-03, rollback: the user reported that 2.4.0 does not work on Enterprise plans and asked to keep 2.3 and undo the 2.4 changes ("keep cache tax 2.3 and fix it also undo cache 2.4 changes is not working on enterprise plans"). The 2.4.0 commit `6acdd5a` is reversed in every file except this record: `plugins/cache-tax/` again matches the vendored 2.3.0 from `66f982d`, and the marketplace entry and repo README describe 2.3.0. Checks on the Windows workstation: `claude plugin validate plugins/cache-tax` passed; `claude plugin test plugins/cache-tax` 137 pass, 0 fail. Installed by hand, because the workstation has no jq or real python3 and `./install.sh` can't run there: copied `66f982d` into `~/.claude/marketplace/cache-tax`, uninstalled `cache-tax@claude-code-mods` 2.2.1, removed the `claude-code-mods` marketplace, installed `cache-tax@claude-optimization` 2.3.0. `claude plugin list` shows it enabled, and `/cache-tax` printed its card. The work machine (dsn) keeps 2.4.0 until it pulls and reruns `./install.sh`. Open G06 step 5 and G07 are dropped. Record closed as CANCELED.
 
 ## Handoff
 
@@ -406,4 +431,4 @@ A new session (the T18–T20 report pasted after `/clear`) reran the automated g
   5. Wait more than 1 hour, then `/clear` and send a message: it should go through with no refusal or price warning.
   6. If managed settings set any cache-tax option, the card's `options` line names it as set by your organization, and `/cache-tax guard off` is refused.
   7. `/keepwarm off`, and report the lines from steps 2–4 and 6.
-- Exact next action: the user runs the G06 checklist on the work login (after `git pull` and `./install.sh` there), and optionally approves G07.
+- Exact next action: none; record CANCELED on 2026-11-03 (see the rollback entry under Decisions and scope changes).

@@ -30,7 +30,7 @@
     {
       "name": "cache-tax",
       "source": "./cache-tax",
-      "description": "Keeps the prompt cache warm for a window you set (/keepwarm 6h) and stops a cold send once with its estimated rewrite cost. Works out whether the session caches for an hour or five minutes, reports pings in the plan's terms, and takes options an organization can lock. Based on karanb192/cache-tax v2.3.0, with local changes."
+      "description": "Keeps the one-hour prompt cache warm for a window you set (/keepwarm 6h) and stops a cold send once with its estimated rewrite cost. Vendored from karanb192/cache-tax v2.3.0."
     },
     {
       "name": "session-usage",
