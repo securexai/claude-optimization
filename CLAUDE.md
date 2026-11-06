@@ -42,6 +42,14 @@ How approval works:
 - Run the checks the repository requires and the ones that prove the acceptance criteria. Repeat or broaden them only when a change, a failure, or an open risk justifies it.
 - For research and documents, check that citations support their claims, recompute calculations, and look at the rendered output. When extracted text is incomplete, inspect the source visuals.
 
+## Review before handoff
+
+- The change sets the risk tier, not who wrote it. **Low:** docs, comments, and added tests. **High:** paths a repository's instructions mark high-risk, plus anything that touches authentication, secrets, SSH or firewall rules, Git hooks, CI, `.gitignore`, or Claude Code settings and policy. **Medium:** everything else.
+- For medium changes, run `/code-review medium` before asking me to commit or push. For high changes, run `/code-review high` and `/security-review` (if it isn't available in the session, say so), and state how to roll the change back. Always type the level, because a bare `/code-review` reuses the last level typed. Use `max` or `ultra` only when I ask.
+- Wait for the review to finish, then fix or explain each finding. After a fix, review only the new diff. After three review-and-fix rounds on the same change, stop and propose a different approach instead of a fourth round.
+- A review by you or another agent never replaces mine on a high change. My approval covers the exact diff I saw; a later commit needs a fresh look.
+- Your last message is the handoff, even if a review skill says its report must be your final reply. In it, give the tier, the checks run and their results, each review finding and what you did about it, and what was tested live versus offline.
+
 ## Scripts and automation
 
 Scripts get rerun after partial failures, so make state-changing scripts and automation idempotent by default: a rerun with the same inputs and desired state converges without duplicate effects.
@@ -54,7 +62,7 @@ Scripts get rerun after partial failures, so make state-changing scripts and aut
 ## Tools and delegation
 
 - Prefer existing tools, project scripts, and established procedures over new ones.
-- Use subagents when I ask, or for large work that is genuinely independent and parallel, such as a wide multi-file investigation. Don't delegate what you can finish in a handful of tool calls, and don't use subagents to double-check your own work. When delegating, give each subagent a bounded, non-overlapping task and verify the combined result.
+- Use subagents when I ask, or for large work that is genuinely independent and parallel, such as a wide multi-file investigation. Don't delegate what you can finish in a handful of tool calls. Apart from the reviews that "Review before handoff" asks for, don't use subagents to double-check your own work. When delegating, give each subagent a bounded, non-overlapping task and verify the combined result.
 
 ## Skills and approved plans
 
@@ -66,7 +74,7 @@ Scripts get rerun after partial failures, so make state-changing scripts and aut
 
 - Before calling the work done, update the documentation your change affects, and keep behavior, commands, and examples accurate. Mention skipped updates only when they matter.
 - Keep one canonical source per procedure or specification and link to it rather than duplicating it. Validate changed docs and links, and keep historical records distinct from current guidance.
-- When a correction is likely to recur, propose the smallest fix to the relevant skill, reference, test, or script, and apply it only within authorized scope. Never silently change global policy or unrelated skills.
+- When a correction is likely to recur, propose the smallest fix to the relevant skill, reference, test, script, or the repository's review guidance, and apply it only within authorized scope. Never silently change global policy or unrelated skills.
 - Don't add AI or vendor attribution, co-author lines, generated-by notices, or promotional signatures.
 
 ## Communication
