@@ -1,0 +1,61 @@
+# Test image for tests/container/run.sh (plan: docs/plans/2026-11-04-layered-review-and-podman-tests.md).
+#
+# Base: the official Fedora 45 image, the release the host runs. The image installs everything the tests use, so it does
+# not depend on any toolbox image: pre-commit, ShellCheck, jq, git, Python and Node.js from the Fedora repositories;
+# shfmt built from source at the version the repos' hooks assume; Betterleaks at the version and checksum dev-toolbox
+# pins; markdownlint-cli2 and Claude Code from npm, with Claude Code pinned to the version the host runs. Build it with
+# tests/container/build.sh.
+ARG BASE_IMAGE=registry.fedoraproject.org/fedora:45
+
+# Fedora 45 has no shfmt package yet, and upstream publishes no checksum for 3.7.0 (the version of the RPM that the
+# repos' pre-commit hooks were written against). `go install` verifies the module against Go's public checksum
+# database, so this is a verified build rather than a download trusted on first use. The Go toolchain stays in this
+# stage and never reaches the final image.
+FROM ${BASE_IMAGE} AS shfmt-build
+ARG SHFMT_VERSION=3.7.0
+RUN dnf -y install --setopt=install_weak_deps=False ca-certificates git golang \
+ && dnf clean all
+RUN GOBIN=/out CGO_ENABLED=0 GOTOOLCHAIN=local go install -trimpath "mvdan.cc/sh/v3/cmd/shfmt@v${SHFMT_VERSION}"
+
+FROM ${BASE_IMAGE}
+ARG BASE_IMAGE
+ARG CLAUDE_CODE_VERSION=2.1.318
+ARG BETTERLEAKS_VERSION=1.1.2
+ARG BETTERLEAKS_SHA256=648c20617178065072ff1791d383192a62c911d9b4427f0426a8c504a6d9ddad
+# The base.name label lets `run.sh audit-diff` recognise the base image that the build pulled.
+LABEL purpose="claude-optimization-test" \
+      claude-code.version="${CLAUDE_CODE_VERSION}" \
+      org.opencontainers.image.base.name="${BASE_IMAGE}"
+
+# nodejs-full-i18n is not optional: Fedora 45's nodejs is built with small-icu, and in that build `new Intl.Segmenter()`
+# segfaults. markdownlint-cli2 reaches that call on some Markdown (it crashed on quanto's CLAUDE.md, with or without the
+# review-guidance patch), so a pre-commit hook for it fails with exit code -11 until the full ICU data is installed.
+USER root
+RUN dnf -y install --setopt=install_weak_deps=False \
+      ShellCheck ca-certificates curl diffutils findutils gawk git grep gzip jq nodejs nodejs-full-i18n npm pre-commit \
+      procps-ng python3 sed tar util-linux which \
+ && dnf clean all
+
+COPY --from=shfmt-build /out/shfmt /usr/local/bin/shfmt
+
+# Betterleaks is a Go release tarball on GitHub; the version and sha256 are the ones dev-toolbox pins.
+RUN set -eu; \
+    tmp="$(mktemp -d)"; \
+    url="https://github.com/betterleaks/betterleaks/releases/download/v${BETTERLEAKS_VERSION}/betterleaks_${BETTERLEAKS_VERSION}_linux_x64.tar.gz"; \
+    curl -fsSL -o "${tmp}/betterleaks.tar.gz" "${url}"; \
+    printf '%s  %s\n' "${BETTERLEAKS_SHA256}" "${tmp}/betterleaks.tar.gz" | sha256sum -c -; \
+    tar -xzf "${tmp}/betterleaks.tar.gz" -C "${tmp}"; \
+    bin="$(find "${tmp}" -type f -name betterleaks -print -quit)"; \
+    [ -n "${bin}" ] || { echo "betterleaks binary not found in archive"; exit 1; }; \
+    install -m 0755 "${bin}" /usr/local/bin/betterleaks; \
+    rm -rf "${tmp}"; \
+    /usr/local/bin/betterleaks version 2>/dev/null || /usr/local/bin/betterleaks --version
+
+RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" markdownlint-cli2 \
+ && npm cache clean --force
+
+# Keep the version pinned for the whole run. The telemetry opt-outs come from the settings.json that the installer
+# places in the test home, so the container behaves like the host without more ENV lines. run.sh passes
+# --userns=keep-id, which runs the process as the host user; UID 1000 is the fallback when the image is run without it.
+ENV DISABLE_AUTOUPDATER=1
+USER 1000:1000

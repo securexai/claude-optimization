@@ -19,7 +19,8 @@ Portable global configuration, Auto Mode policy, and `PreToolUse` safety hook fo
 | [`plugins/.claude-plugin/marketplace.json`](plugins/.claude-plugin/marketplace.json) | Local marketplace `claude-optimization`, installed to `~/.claude/marketplace/`: third-party plugins as `git-subdir` sources, each pinned to a reviewed commit `sha`, and local plugins as `./NAME` sources. |
 | [`plugins/cache-tax/`](plugins/cache-tax/README.md) | Local mod `cache-tax`, vendored from [karanb192/cache-tax](https://github.com/karanb192/cache-tax) v2.3.1 (MIT) and copied to `~/.claude/marketplace/cache-tax/`: keeps the one-hour prompt cache warm during breaks (`/keepwarm`) and stops a cold send once with its estimated rewrite cost. |
 | [`plugins/session-usage/`](plugins/session-usage/) | Local mod `session-usage`, copied to `~/.claude/marketplace/session-usage/`: a line above the prompt with live session cost, context fill, rate-limit windows, session token totals and the last turn's tokens and cost. |
-| [`docs/plans/`](docs/plans/) | Execution records of approved changes (history, not current guidance). |
+| [`tests/container/`](tests/container/) | Rootless-Podman test harness (see [Container Tests](#container-tests)): `build.sh` builds the test image, `run.sh offline` runs the hook suite, the settings render and the sibling repos' suites in throwaway containers. |
+| [`docs/plans/`](docs/plans/) | Plans and execution records of changes (history, not current guidance). |
 
 ## Replicating on a Fresh Machine
 
@@ -115,3 +116,39 @@ git diff automode/defaults.json   # review the changed built-in wording
 ```
 
 If the renderer reports `default slots not found`, a slot it overrides was renamed: update the label in `automode/base.json` or `hosts/*.json`.
+
+## Container Tests
+
+`tests/container/` runs checks in throwaway rootless-Podman containers, so they never touch `~/.claude`, your checkouts or your existing containers. Each container starts with `--rm`, a read-only root filesystem, no capabilities and, in the offline tier, no network. Repos are mounted read-only from snapshots and copied into the container's tmpfs.
+
+Prerequisites: rootless Podman and network access during the build (Fedora registry and mirrors, GitHub releases, npm and the Go module proxy). `build.sh` builds on the official Fedora 45 image, the release the host runs, and pulls it when it is not in local storage. The sibling repos `mikrotik`, `hermes-fedora-host` and `quanto` are expected next to this one, and `local-ai` and `dev-toolbox` too for the guidance tier (override the location with `REPOS_BASE`).
+
+```bash
+tests/container/run.sh audit-baseline  # before the first build, and again after a restart: records Podman's container, image, volume, network and secret names
+tests/container/build.sh               # builds localhost/claude-test:fedora-45: pre-commit, ShellCheck, shfmt 3.7.0, Betterleaks, Node.js, markdownlint-cli2 and Claude Code 2.1.318
+tests/container/run.sh offline         # image inventory, bash-guard suite, settings render, an installer run in an empty config directory, and the mikrotik, hermes-fedora-host and quanto suites
+tests/container/run.sh audit-diff      # shows that Podman gained only the test images (fedora-45 and builder-shfmt) and the Fedora 45 base image since the baseline
+tests/container/run.sh guidance        # review-guidance patches for the sibling repos: each applies to main, touches one file and passes the repo's own pre-commit
+```
+
+`offline` requires an exact count from the bash-guard suite, which lives in this repo. The sibling repos' suites must report no failures and at least a minimum count (`MIN_*` in `run.sh`), so a sibling adding tests doesn't fail the tier, while one losing tests does.
+
+`guidance` reads `<repo>.patch` from `~/Downloads` (or `$GUIDANCE_PATCHES`) and needs the network, because pre-commit installs its hook environments from it.
+
+`run.sh` keeps its snapshots and audit files under `$XDG_RUNTIME_DIR/cotest` (tmpfs, gone at logout, so record a new baseline after a restart), names the snapshots after their content and never deletes one. Keep the Claude Code version in the image (`CLAUDE_CODE_VERSION=… tests/container/build.sh`) equal to the host's, or `automode/defaults.json` stops matching, and pass the same variable to `run.sh`, which checks the image against it.
+
+### Model tiers
+
+These tiers call Claude from the container, so they use the default network and a token that holds nothing but model access. Their fixtures are synthetic, and `model-cheap m3` also mounts clones of the sibling repos, which hold no project hooks or MCP servers.
+
+```bash
+claude setup-token                    # once: approve in the browser, then copy the token it prints; keep it and this command's output out of chats and logs
+tests/container/run.sh store-token    # paste it at the prompt; saved on tmpfs with mode 600, so repeat this after a restart
+tests/container/run.sh check-auth     # a one-word prompt from a container that has only the token
+tests/container/run.sh model-cheap    # Haiku, capped at $0.05 a call: which instruction files load, the commands a session lists, each repo's guidance, the review rule
+tests/container/run.sh model-review   # Sonnet, capped at $1 a session: a review of a seeded defect, a high-risk handoff and the guard hook, each with a control
+```
+
+Model answers vary, so the seeded-defect, handoff and guard checks run three sessions and need two; a guard session that makes a commit fails the check outright. `model-review` keeps each session's events under `$XDG_RUNTIME_DIR/cotest/logs`, and they are worth reading: a skill that started and a handoff that names the right words do not prove that the review did its job. To try a change to the global rules before editing `CLAUDE.md`, pass a draft with `COTEST_CLAUDE_MD=<file>`.
+
+`/security-review` reads `origin/HEAD` when it starts and fails without it, which `git remote set-head origin --auto` fixes in a clone that has a remote.
