@@ -9,6 +9,7 @@
 #        tests/container/run.sh check-auth              (one-word prompt from a container that has only your token)
 #        tests/container/run.sh model-cheap [m1 m2 m3 m4] (Haiku checks: instruction loading, skills, guidance, the rule)
 #        tests/container/run.sh model-review [CHECK...] (Sonnet sessions, capped: pilot, r1, r1-clean, r2, r2-norule, r3, r3-nohook)
+#        tests/container/run.sh model-git baseline|with|trigger [SCENARIO...] (git-workflow skill, capped; repo state is judged)
 #
 # Every test runs in a throwaway `podman run --rm` container with no host home and no real checkout. Snapshots of the
 # repos are mounted read-only and copied into the container's tmpfs, the root filesystem is read-only, all capabilities
@@ -20,7 +21,9 @@
 # (seconds per container), REPOS_BASE (where the sibling repos live), COTEST_CLAUDE_MD (a draft of CLAUDE.md for the
 # model-review test home, so a rule change can be tried before the repo's file changes),
 # COTEST_ALLOW_UNTAGGED (image IDs that audit-diff may report as new untagged images), EXPECT_GUARD (the exact
-# bash-guard count), and MIN_ROUTEROS, MIN_ROUTEROS_UNIT, MIN_HERMES, MIN_HERMES_ENTRY (minimum sibling suite counts).
+# bash-guard count), EXPECT_PROCEDURES and EXPECT_SKILLS (the exact git-workflow procedure and skill counts),
+# MIN_ROUTEROS, MIN_ROUTEROS_UNIT, MIN_HERMES, MIN_HERMES_ENTRY (minimum sibling suite counts), and for model-git
+# GW_MODEL, GW_RUNS, GW_NEED and GW_TRIGGER_FALSE_MAX.
 set -euo pipefail
 shopt -s inherit_errexit # a failure inside $(...) must stop the run, not be swallowed
 
@@ -38,6 +41,8 @@ env_file=${COTEST_ENV_FILE:-${XDG_RUNTIME_DIR:-/nonexistent}/cotest.env}
 # size; lower one only after checking that the tests were removed on purpose. These variables also exist so a wrong
 # value can prove that the runner fails when it should.
 expect_guard=${EXPECT_GUARD:-123}
+expect_procedures=${EXPECT_PROCEDURES:-142} # inside/git-workflow-procedures.sh: 71 tests, each on two repository formats
+expect_skills=${EXPECT_SKILLS:-2}
 min_routeros=${MIN_ROUTEROS:-199}
 min_routeros_unit=${MIN_ROUTEROS_UNIT:-35}
 min_hermes=${MIN_HERMES:-226}
@@ -279,6 +284,34 @@ t_o4() {
   fi
 }
 
+# O6: every skill's format, links and commands (inside/validate-skills.py), after the validator's own self-test.
+t_o6() {
+  local snap out rc=0 last
+  snap=$(snapshot_worktree)
+  out=$(podman_run o6 none "$snap" python3 -I tests/container/inside/validate-skills.py skills hooks/bash-guard.sh 2>&1) || rc=$?
+  last=$(tail -n1 <<<"$out")
+  if [ "$rc" = 0 ] && [[ $last =~ ^skills=$expect_skills\ commands=[0-9]+\ errors=0$ ]]; then
+    pass O6 "skills validated: $last"
+  else
+    fail O6 "skills validator (rc=$rc): $last"
+    grep '^ERROR' <<<"$out" | head -10 || true
+  fi
+}
+
+# O7: every Git behavior the git-workflow skill states, on today's repository formats and on Git 3.0's.
+t_o7() {
+  local snap out rc=0 last
+  snap=$(snapshot_worktree)
+  out=$(podman_run o7 none "$snap" bash tests/container/inside/git-workflow-procedures.sh 2>&1) || rc=$?
+  last=$(tail -n1 <<<"$out")
+  if [ "$rc" = 0 ] && [ "$last" = "pass=$expect_procedures fail=0" ]; then
+    pass O7 "git-workflow procedures: $last (SHA-1/files and SHA-256/reftable)"
+  else
+    fail O7 "git-workflow procedures (rc=$rc): $last"
+    grep -A3 '^FAIL' <<<"$out" | head -12 || true
+  fi
+}
+
 t_o5_mikrotik() {
   local snap out rc=0 counts units
   snap=$(snapshot_ref mikrotik main)
@@ -334,6 +367,8 @@ tier_offline() {
   t_o2
   t_o3
   t_o4
+  t_o6
+  t_o7
   t_o5_mikrotik
   t_o5_hermes
   t_o5_quanto
@@ -576,14 +611,14 @@ t_m2() {
   run_extra=()
   line=$(grep '^m2 ' <<<"$out" | tail -n1 || true)
   slash=$(sed -nE 's/^m2 slash=([^ ]+) .*/\1/p' <<<"$line")
-  for want in ${M2_SLASH:-code-review security-review}; do
+  for want in ${M2_SLASH:-code-review security-review git-workflow plan-execution}; do
     case ",$slash," in
       *",$want,"*) ;;
       *) missing="$missing $want" ;;
     esac
   done
   if [ "$rc" = 0 ] && [ -z "$missing" ] && [[ $line == *" is_error=false "* ]]; then
-    pass M2 "the session lists ${M2_SLASH:-code-review security-review}; cost \$$(sum_costs <<<"$line")"
+    pass M2 "the session lists ${M2_SLASH:-code-review security-review git-workflow plan-execution}; cost \$$(sum_costs <<<"$line")"
   else
     fail M2 "rc=$rc missing:${missing:- none} (${line##* })"
   fi
@@ -814,11 +849,118 @@ tier_model_review() {
   [ "$fails" = 0 ]
 }
 
-usage() { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; }
+# --- Model tier: the git-workflow skill ----------------------------------------------------------------------------
+# inside/model-git.sh builds a synthetic repository with a trap in it, runs one capped session and judges the final
+# repository state. "baseline" removes the skill and only reports, because it measures what the skill has to beat. "with"
+# keeps the skill: each scenario must pass every assertion in at least GW_NEED of GW_RUNS sessions. "trigger" runs prompts
+# that should and should not load the skill. Events go to $work/logs (tmpfs); the fixtures are synthetic.
+gw_scenarios='commit-mixed force-push squash-own undo-pushed recover-lost secret-pushed stack-rebase fixup-commit conflict-merge tag-release branch-fresh worktree-hotfix'
+gw_runs=${GW_RUNS:-3}
+gw_need=${GW_NEED:-2}
+
+# gw_session CHECK CONFIG LABEL: one container. Prints every result line, then "container-exit=N log=PATH".
+gw_session() {
+  local check=$1 config=$2 label=$3 snap out rc=0 log
+  snap=$(snapshot_worktree)
+  mkdir -p "$work/logs"
+  # mktemp gives every session its own file, even for sessions started in the same second.
+  log=$(mktemp --suffix=.jsonl "$work/logs/gw-$check-$config-$label-$(date +%Y%m%d-%H%M%S)-XXXXXX")
+  run_extra=(--env-file "$env_file" -e "GW_MODEL=${GW_MODEL:-claude-sonnet-5-5}")
+  out=$(podman_run "gw-$check-$config-$label" default "$snap" bash tests/container/inside/model-git.sh "$check" "$config" 2>&1) || rc=$?
+  run_extra=()
+  sed -n 's/^stream| //p' <<<"$out" >"$log"
+  grep -E '^gw(-trigger)? ' <<<"$out" || echo "gw scenario=$check no-summary: $(grep -v '^stream| ' <<<"$out" | tail -n3 | tr '\n' ' ' | cut -c1-240)"
+  echo "container-exit=$rc log=$log"
+}
+
+# gw_passed LINE: true when a summary line shows every assertion passed, a clean finish and no cap.
+gw_passed() {
+  [[ $1 =~ passed=([0-9]+)/([0-9]+) ]] && [ "${BASH_REMATCH[1]}" = "${BASH_REMATCH[2]}" ] &&
+    [[ $1 == *" is_error=false subtype=success "* ]] && ! over_cap "$1"
+}
+
+# t_gw_with SCENARIO: GW_RUNS sessions with the skill; at least GW_NEED must pass everything.
+t_gw_with() {
+  local s=$1 i out line good=0 used=0 total=0 cost
+  for i in $(seq 1 "$gw_runs"); do
+    out=$(gw_session "$s" with "run$i")
+    line=$(grep '^gw ' <<<"$out" | tail -n1 || true)
+    echo "      $s run $i: ${line#gw scenario="$s" config=with }"
+    if gw_passed "$line"; then good=$((good + 1)); fi
+    if [ "$(field "$line" skill)" = yes ]; then used=$((used + 1)); fi
+    cost=$(field "$line" cost)
+    total=$(awk -v a="$total" -v b="${cost:-0}" 'BEGIN { printf "%.4f", a + b }')
+  done
+  if [ "$good" -ge "$gw_need" ]; then
+    pass "GW-$s" "$good of $gw_runs sessions passed every assertion; skill loaded in $used; total \$$total"
+  else
+    fail "GW-$s" "$good of $gw_runs sessions passed every assertion (need $gw_need); skill loaded in $used; total \$$total"
+  fi
+}
+
+# t_gw_baseline SCENARIO: GW_RUNS sessions without the skill. It reports and never fails: the baseline is a measurement.
+t_gw_baseline() {
+  local s=$1 i out line
+  for i in $(seq 1 "$gw_runs"); do
+    out=$(gw_session "$s" without "run$i")
+    line=$(grep '^gw ' <<<"$out" | tail -n1 || true)
+    echo "BASE  $s run $i: ${line#gw scenario="$s" config=without }"
+  done
+}
+
+# t_gw_trigger: the prompts in inside/model-git.sh. Prints each result; the counts decide.
+t_gw_trigger() {
+  local out hits misses false_hits lines
+  out=$(gw_session trigger with run)
+  lines=$(grep '^gw-trigger ' <<<"$out" || true)
+  echo "${lines:-no trigger results: $out}" | cut -c1-170
+  # A broken loop once ran only the first prompt and still passed; every prompt must report.
+  if [ "$(grep -c . <<<"$lines")" != "${GW_TRIGGER_PROMPTS:-16}" ]; then
+    fail GW-trigger "expected ${GW_TRIGGER_PROMPTS:-16} prompt results, got $(grep -c . <<<"$lines")"
+    return 0
+  fi
+  hits=$(grep -c ' should=yes got=yes ' <<<"$lines" || true)
+  misses=$(grep -c ' should=yes got=no ' <<<"$lines" || true)
+  false_hits=$(grep -c ' should=no got=yes ' <<<"$lines" || true)
+  echo "      trigger cost: \$$(sed -nE 's/.* cost=([0-9.e-]+) .*/\1/p' <<<"$lines" | awk '{s += $1} END {printf "%.4f", s}')"
+  # Claude handles a one-line request on its own and may not reach for a skill, so the bar on should-load prompts is a
+  # majority. Loading it on a request that needs no Git work costs context, so the bar there is one.
+  if [ "$hits" -gt "$misses" ] && [ "$false_hits" -le "${GW_TRIGGER_FALSE_MAX:-1}" ]; then
+    pass GW-trigger "$hits should-load prompts loaded it, $misses did not; $false_hits should-not prompts loaded it"
+  else
+    fail GW-trigger "$hits should-load prompts loaded it, $misses did not; $false_hits should-not prompts loaded it"
+  fi
+}
+
+# tier_model_git MODE [SCENARIO...]: MODE is baseline, with or trigger.
+tier_model_git() {
+  local mode=${1:-} s
+  shift || true
+  require_image
+  require_token_file
+  if [ "$#" = 0 ]; then
+    # shellcheck disable=SC2086 # the scenario list is space-separated on purpose
+    set -- $gw_scenarios
+  fi
+  case $mode in
+    baseline) for s in "$@"; do t_gw_baseline "$s"; done ;;
+    with) for s in "$@"; do t_gw_with "$s"; done ;;
+    trigger) t_gw_trigger ;;
+    *) die "model-git needs a mode (baseline | with | trigger)." ;;
+  esac
+  echo "model-git tier ($mode): $fails failure(s)"
+  [ "$fails" = 0 ]
+}
+
+usage() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; }
 
 case ${1:-} in
   check-auth) check_auth ;;
   store-token) store_token ;;
+  model-git)
+    shift
+    tier_model_git "$@"
+    ;;
   model-cheap)
     shift
     tier_model_cheap "$@"
@@ -841,5 +983,5 @@ case ${1:-} in
     audit_diff "$@"
     ;;
   -h | --help | '') usage ;;
-  *) die "unknown command '$1' (offline | guidance | model-cheap | model-review | audit-baseline | audit-diff | store-token | check-auth)." ;;
+  *) die "unknown command '$1' (offline | guidance | model-cheap | model-review | model-git | audit-baseline | audit-diff | store-token | check-auth)." ;;
 esac

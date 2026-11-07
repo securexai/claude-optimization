@@ -8,6 +8,7 @@ Portable global configuration, Auto Mode policy, and `PreToolUse` safety hook fo
 | :--- | :--- |
 | [`CLAUDE.md`](CLAUDE.md) | Global working agreements installed to `~/.claude/CLAUDE.md`. |
 | [`skills/plan-execution/`](skills/plan-execution/SKILL.md) | Local `plan-execution` skill (referenced by [`CLAUDE.md`](CLAUDE.md)) installed to `~/.claude/skills/plan-execution/`. |
+| [`skills/git-workflow/`](skills/git-workflow/SKILL.md) | Local `git-workflow` skill installed to `~/.claude/skills/git-workflow/`: branches from the fetched remote tip, commits one change at a time in the repository's style, checks what a force-push would overwrite, tags what the remote has, and undoes or recovers commits. Claude loads it from its description when Git work comes up. Its [research record](docs/research/2026-11-07-git-workflow-best-practices.md) gives the sources and test results behind it. |
 | [`settings.json`](settings.json) | Global Claude Code settings shared by every machine (`auto` mode, `modelSettings`, `hooks`, `enabledPlugins`, and the telemetry opt-outs in `env`), everything except `autoMode`. |
 | [`automode/defaults.json`](automode/defaults.json) | Snapshot of `claude auto-mode defaults`; the built-in slot wording the rendered `environment` starts from. |
 | [`automode/base.json`](automode/base.json) | `autoMode` policy shared by every machine: slot overrides about the user and the repositories, extra `environment` entries, and the `soft_deny` rules. |
@@ -19,8 +20,9 @@ Portable global configuration, Auto Mode policy, and `PreToolUse` safety hook fo
 | [`plugins/.claude-plugin/marketplace.json`](plugins/.claude-plugin/marketplace.json) | Local marketplace `claude-optimization`, installed to `~/.claude/marketplace/`: third-party plugins as `git-subdir` sources, each pinned to a reviewed commit `sha`, and local plugins as `./NAME` sources. |
 | [`plugins/cache-tax/`](plugins/cache-tax/README.md) | Local mod `cache-tax`, vendored from [karanb192/cache-tax](https://github.com/karanb192/cache-tax) v2.3.1 (MIT) and copied to `~/.claude/marketplace/cache-tax/`: keeps the one-hour prompt cache warm during breaks (`/keepwarm`) and stops a cold send once with its estimated rewrite cost. |
 | [`plugins/session-usage/`](plugins/session-usage/) | Local mod `session-usage`, copied to `~/.claude/marketplace/session-usage/`: a line above the prompt with live session cost, context fill, rate-limit windows, session token totals and the last turn's tokens and cost. |
-| [`tests/container/`](tests/container/) | Rootless-Podman test harness (see [Container Tests](#container-tests)): `build.sh` builds the test image, `run.sh offline` runs the hook suite, the settings render and the sibling repos' suites in throwaway containers. |
+| [`tests/container/`](tests/container/) | Rootless-Podman test harness (see [Container Tests](#container-tests)): `build.sh` builds the test image, `run.sh offline` runs the hook suite, the settings render, the skills validator, the git-workflow procedures and the sibling repos' suites in throwaway containers. |
 | [`docs/plans/`](docs/plans/) | Plans and execution records of changes (history, not current guidance). |
+| [`docs/research/`](docs/research/) | Research records behind changes (history, not current guidance). |
 
 ## Replicating on a Fresh Machine
 
@@ -126,12 +128,19 @@ Prerequisites: rootless Podman and network access during the build (Fedora regis
 ```bash
 tests/container/run.sh audit-baseline  # before the first build, and again after a restart: records Podman's container, image, volume, network and secret names
 tests/container/build.sh               # builds localhost/claude-test:fedora-45: pre-commit, ShellCheck, shfmt 3.7.0, Betterleaks, Node.js, markdownlint-cli2 and Claude Code 2.1.318
-tests/container/run.sh offline         # image inventory, bash-guard suite, settings render, an installer run in an empty config directory, and the mikrotik, hermes-fedora-host and quanto suites
+tests/container/run.sh offline         # image inventory, bash-guard suite, settings render, an installer run in an empty config directory, skills validator, git-workflow procedures, and the mikrotik, hermes-fedora-host and quanto suites
 tests/container/run.sh audit-diff      # shows that Podman gained only the test images (fedora-45 and builder-shfmt) and the Fedora 45 base image since the baseline
 tests/container/run.sh guidance        # review-guidance patches for the sibling repos: each applies to main, touches one file and passes the repo's own pre-commit
 ```
 
 `offline` requires an exact count from the bash-guard suite, which lives in this repo. The sibling repos' suites must report no failures and at least a minimum count (`MIN_*` in `run.sh`), so a sibling adding tests doesn't fail the tier, while one losing tests does.
+
+Two `offline` checks cover the skills:
+
+- **O6** runs `inside/validate-skills.py` on every directory under `skills/`. It checks the frontmatter against the Claude Code skills reference (only known keys, a name that matches the directory, a third-person description within the length limits), the body length, links and the contents list of long reference files. Every command a skill shows must name a real subcommand and real options of the image's Git, and `bash-guard.sh` must not deny it. The validator first proves it rejects a deliberately broken skill.
+- **O7** runs `inside/git-workflow-procedures.sh`: every Git behavior `skills/git-workflow` states, including the failure modes it warns about (a bare `--force-with-lease` after a fetch really does overwrite a teammate's commit). It runs once with today's repository formats and once with SHA-256 objects and reftable refs, the Git 3.0 defaults.
+
+When you change the skill, add or change the test for each behavior it states and update `EXPECT_PROCEDURES` (or `EXPECT_SKILLS` for a new skill) in `run.sh`.
 
 `guidance` reads `<repo>.patch` from `~/Downloads` (or `$GUIDANCE_PATCHES`) and needs the network, because pre-commit installs its hook environments from it.
 
@@ -147,7 +156,12 @@ tests/container/run.sh store-token    # paste it at the prompt; saved on tmpfs w
 tests/container/run.sh check-auth     # a one-word prompt from a container that has only the token
 tests/container/run.sh model-cheap    # Haiku, capped at $0.05 a call: which instruction files load, the commands a session lists, each repo's guidance, the review rule
 tests/container/run.sh model-review   # Sonnet, capped at $1 a session: a review of a seeded defect, a high-risk handoff and the guard hook, each with a control
+tests/container/run.sh model-git with # Sonnet, capped at $1 a session: 12 git-workflow scenarios, 3 sessions each, judged by repository state
+tests/container/run.sh model-git baseline  # the same scenarios without the skill; reports only, to show what the skill changes
+tests/container/run.sh model-git trigger   # 10 prompts that should load the skill and 6 that should not
 ```
+
+`model-git` builds a synthetic repository with a trap for each scenario, such as a teammate's commit on the branch you are told to force-push, an unignored `.env`, or a local `main` that is behind `origin`. It judges the result from the repository, not from what the model says. Its home has no guard hook, so the model's own decision about a push is what gets measured; the hook is covered by `model-review r3`. `with` needs every assertion in 2 of 3 sessions (`GW_RUNS`, `GW_NEED`); pass `GW_MODEL=claude-opus-5-5` or `claude-haiku-5-5` to try another model, and scenario names to run a subset. The scenarios and their results are in the skill's [research record](docs/research/2026-11-07-git-workflow-best-practices.md).
 
 Model answers vary, so the seeded-defect, handoff and guard checks run three sessions and need two; a guard session that makes a commit fails the check outright. `model-review` keeps each session's events under `$XDG_RUNTIME_DIR/cotest/logs`, and they are worth reading: a skill that started and a handoff that names the right words do not prove that the review did its job. To try a change to the global rules before editing `CLAUDE.md`, pass a draft with `COTEST_CLAUDE_MD=<file>`.
 
