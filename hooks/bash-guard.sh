@@ -86,9 +86,17 @@ q="[\"']?"   # an optional opening quote
 # "git", then only global options (-C dir, -c k=v, --flag[=v], --opt v), then the subcommand.
 # A -C/-c value is one shell word, quotes included: -c alias.sp='stash push' is not a push.
 # -c/-C never stand alone as a flag, or -c push.default=simple would read as the subcommand push.
-# The long options git(1) documents with a value that git 2.56.0 also takes as the next word (spaceopt) always take
+# spaceopt lists the long options git 2.56.0 takes with the next word as their value: five that git(1) documents with =
+# (--git-dir, --work-tree, --namespace, --attr-source, --config-env) and the undocumented --shallow-file, which has no
+# = form. Other options git(1) shows with = do not take the next word: --list-cmds needs =, and --exec-path without =
+# prints the path and exits. To recheck after a git upgrade, run this (strings is from binutils; the binary under
+# git --exec-path is the real one even behind a shim); it prints the options other than --config-env:
+#   for o in $(strings "$(git --exec-path)/git" | grep -oE '^--[a-z-]+$' | sort -u); do
+#     [ "$(git "$o" nosuch hash-object --stdin </dev/null 2>/dev/null)" = e69de29bb2d1d6434b8b29ae775ad8c2e48c5391 ] && echo "$o"
+#   done
+# and for --config-env put a.b=HOME (a dotted key and a set variable) in place of nosuch. Options in spaceopt always take
 # that word, even one starting with -, as git does; written without = they never match as a bare --flag. So each word
-# reads one way only, and a long run of options cannot backtrack. (--list-cmds needs =; --exec-path without = prints.)
+# reads one way only, and a long run of options cannot backtrack.
 # A value word may not end in a git that could start a match (git -C git, -c k=git): that git is then tried as a start
 # of its own and reads the same words that follow. Otherwise each git in a chain such as git -C git -C git ... is both a
 # value and a start that scans to the end, which is quadratic: seconds on a 10,000-word command. A --flag=value keeps
@@ -98,7 +106,7 @@ q="[\"']?"   # an optional opening quote
 # separated value hides the subcommand, and a quoted space after = or an escaped space ends the options run (see Known
 # limitations at the top).
 word="(?:[^\\s'\"]|'[^']*'|\"[^\"]*\")+(?<!(?<![\\w-])git)"   # one shell word, quotes included
-spaceopt='(?:git-dir|work-tree|namespace|attr-source|config-env)'
+spaceopt='(?:git-dir|work-tree|namespace|attr-source|config-env|shallow-file)'
 git="(?<![\\w-])git(?:\\s+(?:-[Cc]\\s+${word}|--${spaceopt}\\s+${word}|--(?!${spaceopt}(?![\\w=-]))[A-Za-z][\\w-]*(?:=\\S+(?<!(?<![\\w-])git))?|-[A-BD-Za-bd-z][A-Za-z]*))*\\s+"
 seg='[^\n;&|]*'   # the rest of one simple command
 # The same as an argv list: subprocess.run(["git", "-C", repo, "push"]), execFileSync("git", ["push"]).

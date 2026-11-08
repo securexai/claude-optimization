@@ -40,7 +40,7 @@ env_file=${COTEST_ENV_FILE:-${XDG_RUNTIME_DIR:-/nonexistent}/cotest.env}
 # their own, so each must report no failures and at least a minimum count. Raise a minimum to hold a suite to its new
 # size; lower one only after checking that the tests were removed on purpose. These variables also exist so a wrong
 # value can prove that the runner fails when it should.
-expect_guard=${EXPECT_GUARD:-294}
+expect_guard=${EXPECT_GUARD:-307}
 expect_procedures=${EXPECT_PROCEDURES:-142} # inside/git-workflow-procedures.sh: 71 tests, each on two repository formats
 expect_skills=${EXPECT_SKILLS:-2}
 min_routeros=${MIN_ROUTEROS:-199}

@@ -200,6 +200,24 @@ check ask "git --namespace=\$\$'a\\' push 'b c'"
 check deny "git -c x.y=\$\$'\\' commit --no-verify -m 'b c'"
 check deny "git -c x.y=\$\$'\\' commit -n -m 'b c'"
 check deny "HUSKY=0 git -c x.y=\$\$'\\' commit -m 'b c'"
+# --shallow-file (undocumented; git 2.56.0 takes the next word, and has no = form). Reviewer, 2026-11-08: read as a bare
+# flag, it let a following space option swallow the subcommand: the first five were ask or deny before 587e9ad, which
+# allowed them. The next five were allowed on main too, so they close an older gap.
+check ask 'git --shallow-file --work-tree push origin main'
+check deny 'git --shallow-file --git-dir commit -n -m x'
+check deny 'git --shallow-file --namespace commit --no-verify -m x'
+check deny 'git --shallow-file --attr-source config --remove-section core'
+check deny 'HUSKY=0 git --shallow-file --config-env commit -m x'
+check ask 'git --shallow-file nosuch push origin master'
+check deny 'git --shallow-file x commit -am x --no-verify'
+check deny 'git --shallow-file x commit -n -m x'
+check deny 'git --shallow-file x config --remove-section core'
+check deny 'HUSKY=0 git --shallow-file x commit -m x'
+check - 'git --shallow-file x log --oneline'
+# git takes push as the file and origin as the subcommand; this asked before. Like any git command, it pushes only if a
+# config alias or a git-origin program makes origin a push (config aliases are left to the written rules).
+check - 'git --shallow-file push origin'
+check ask 'git --shallow-file=x push'   # known false positive: git rejects --shallow-file= as an unknown option
 # END space-value global options
 # A value that ends in git is not taken as a value (that kept long git -C git ... chains quadratic); the git it ends in
 # starts a match of its own, so these still decide as before.
