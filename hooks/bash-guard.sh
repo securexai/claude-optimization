@@ -111,8 +111,10 @@ fi
 # time, so xargs or another wrapper cannot add a value), then `config [scope] core.hooksPath` followed only by spaces
 # or tabs and then the end, ;, &&, ||, | or ) (bash passes VT, FF and CR on as a value; no redirects: a redirect can
 # hide a value), or `config [scope] get|--get* [scope] core.hooksPath`. Everything else denies: removing it (in a repo
-# that sets it, such as Husky's .husky/_, unset switches the hooks off), removing the core section (--remove-section,
-# any prefix of it git accepts, or the remove-section subcommand) or renaming it, `-c core.hooksPath=... clone`, and text such as
+# that sets it, such as Husky's .husky/_, unset switches the hooks off), removing or renaming the core section or
+# renaming another section into it (any option starting --rem or --ren, which covers every prefix of --remove-section
+# and --rename-section that git accepts, or the remove-section and rename-section subcommands of git 2.46 and later),
+# `-c core.hooksPath=... clone`, and text such as
 # `echo core.hooksPath`, a grep for it or a commit message naming it (known false positives). Each read matches
 # exactly one mention, so mentions > reads means a non-read. Out of reach: escapes inside $'..' that spell the key.
 hp='(?i:core\.hookspath)'
@@ -126,7 +128,7 @@ hp_reads=0
 # gone, is not a literal read, so it counts as a mention without a read and denies.
 if [ "$hp_mentions" -gt 0 ]; then hp_reads=$(count_in "$rawcmd" "${readhp}"); fi
 if [ "$hp_mentions" -gt "$hp_reads" ] ||
-   has "${git}config\\s+(?:\\S+\\s+)*?(?:--rem[a-z-]*|--rename-section|remove-section)\\s+(?:[^\\s;&|]+\\s+)*?${q}(?i:core)${q}(?![\\w.-])" ||
+   has "${git}config\\s+(?:\\S+\\s+)*?(?:--re[mn][a-z-]*|re(?:move|name)-section)\\s+(?:[^\\s;&|]+\\s+)*?${q}(?i:core)${q}(?![\\w.-])" ||
    has "(?<![\\w.-])(?:SKIP|HUSKY|LEFTHOOK|PRE_COMMIT_ALLOW_NO_CONFIG)=\\S*\\s+(?:\\S+\\s+)*?${git}(?:commit|push|merge)(?![\\w-])"; then
   decide deny "Changing or disabling git hooks counts as bypassing them. Ask the user; they can run it themselves with ! if they want it."
 fi

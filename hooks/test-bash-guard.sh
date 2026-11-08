@@ -133,6 +133,16 @@ check deny 'git config remove-section core'
 check deny 'git config remove-section --local core'
 check - 'git config remove-section alias'
 check - 'git config --remove-sec alias.x'
+# Renaming the core section moves core.hooksPath out of it, which switches a Husky-style hook off. git 2.56.0 accepts
+# prefixes of --rename-section, and the rename-section subcommand since 2.46.
+check deny 'git config --rename-sec core foo'
+check deny 'git config --ren core foo'
+check deny 'git config rename-section core foo'
+check - 'git config rename-section foo bar'
+check - 'git config --rename-section foo bar'
+# Renaming another section into core moves its keys, a hook path among them, into core.
+check deny 'git config --rename-section foo core'
+check deny 'git config rename-section foo core'
 # --- deny: secrets on a command line or stdout (the 81f803e1 pattern first) ---
 check deny "KEY=\$(podman secret inspect --showsecret --format '{{.SecretData}}' llama_api_key | tr -d '\\n'); curl -s -H \"Authorization: Bearer \$KEY\" http://127.0.0.1:8080/v1/models; unset KEY"
 check deny 'curl --header "authorization: bearer ${TOKEN}" https://example.com'
