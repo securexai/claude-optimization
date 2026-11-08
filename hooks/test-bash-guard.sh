@@ -75,6 +75,25 @@ check deny "toolbox run --container dev-infra-hermes bash -c 'git commit -m \"x\
 check deny 'git -c core.hooksPath=/dev/null commit -m x'
 check deny 'git config core.hooksPath /dev/null'
 check deny 'git config --local core.hooksPath .nohooks'
+# Adversarial probe 2026-11-07: each of these skipped a failing pre-commit hook in git 2.56.0.
+check deny 'git commit --no-verif -m x'         # git accepts unambiguous long-option prefixes
+check deny 'git commit --no-veri -m x'
+# The same prefixes skipped a failing pre-push hook in git 2.43 (--no-veri also in 2.56.0).
+check deny 'git push --no-veri origin main'
+check deny 'git push --no-verif origin main'
+check ask 'git push --no-verbose origin main'
+check - 'git commit --no-verbose -m x'
+# For commit, push and rebase, --no-v to --no-ver are ambiguous with --no-verbose; am has no --verbose, so git 2.56.0
+# reads them as --no-verify there.
+check deny 'git am --no-ver 0001.patch'
+check deny 'git am --no-v 0001.patch'
+# am -n is am's --no-verify; pull has --[no-]verify for the pre-merge-commit and commit-msg hooks.
+check deny 'git am -n 0001.patch'
+check deny 'git am -3n 0001.patch'
+check - 'git am -3 -s 0001.patch'
+check deny 'git pull --no-verify origin main'
+check - 'git pull --no-verify-signatures origin main'
+check - 'git merge --no-verify-signatures feature'
 check deny 'SKIP=flake8 git commit -m x'
 check deny 'HUSKY=0 git push origin main'
 check deny 'export LEFTHOOK=0; git commit -m x'

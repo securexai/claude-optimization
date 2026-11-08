@@ -2,8 +2,9 @@
 # bash-guard.sh: PreToolUse hook for the Bash and Monitor tools.
 #
 # Enforces the hard limits from ~/.claude/CLAUDE.md that text alone has missed:
-#   deny - skipping git hooks (--no-verify, commit -n, SKIP/HUSKY/LEFTHOOK), or any mention of
-#          core.hooksPath that is not a known read of it (see the rule below);
+#   deny - skipping git hooks (--no-verify and every prefix of it down to --no-v: git accepts --no-veri and
+#          --no-verif, and for am, which has no --verbose, --no-v and up; commit -n, am -n; SKIP/HUSKY/LEFTHOOK), or
+#          any mention of core.hooksPath that is not a known read of it (see the rule below);
 #        - an Authorization: Bearer $VAR header on a command line (argv is readable by
 #          other processes); pipe it instead: printf 'Authorization: Bearer %s\n' "$KEY" | curl -H @-
 #        - podman secret inspect --showsecret whose output isn't captured with VAR=$(...).
@@ -20,6 +21,9 @@
 # (grep fails or never runs) exits 2 so it blocks too. Tests: test-bash-guard.sh.
 # It is a backstop, not a parser: quoting tricks, run-time assembly, other config files and Git 2.54
 # config-based hooks (hook.NAME.*) are left to the written rules in CLAUDE.md and the git-workflow skill.
+# Known limitations: a backslash-newline continuation is joined with a space, while bash joins it with nothing, so a
+# word split across one is read as two words; and the --no-verify scan stops at a ; & or | even inside quotes, so a
+# --no-verify after a quoted argument that holds one (git commit -m 'a; b' --no-verify) is missed.
 set -euo pipefail
 
 # 1 also asks before every git commit. CLAUDE.md's "ask before commits" held in the
@@ -94,8 +98,9 @@ lrest='[^\])\n]*'   # the rest of one argv list
 alias_push="(?i:alias)\\.[^\\s=]+=(?:${qq})?(?:--?[A-Za-z][\\w-]*(?:=\\S+)?\\s+)*push(?![\\w-])"
 
 # --- deny: skipping or disabling git hooks ---
-if has "${git}(?:commit|push|merge|rebase|am|cherry-pick|revert)\\b${seg}\\s--no-verify(?![\\w-])" ||
-   has "${git}commit(?:\\s+(?:'[^']*'|\"[^\"]*\"|[^\\s;&|'\"][^\\s;&|]*))*?\\s-[aeiopqsvz]*n[A-Za-z]*(?![\\w-])"; then
+if has "${git}(?:commit|push|merge|pull|rebase|am|cherry-pick|revert)\\b${seg}\\s--no-v(?:e(?:r(?:i(?:fy?)?)?)?)?(?![\\w-])" ||
+   has "${git}commit(?:\\s+(?:'[^']*'|\"[^\"]*\"|[^\\s;&|'\"][^\\s;&|]*))*?\\s-[aeiopqsvz]*n[A-Za-z]*(?![\\w-])" ||
+   has "${git}am(?:\\s+(?:'[^']*'|\"[^\"]*\"|[^\\s;&|'\"][^\\s;&|]*))*?\\s-[3ckimqrsu]*n[A-Za-z0-9]*(?![\\w-])"; then
   decide deny "Skipping git hooks is never allowed here (CLAUDE.md: never bypass hooks). Fix what the hook reports, or stop and tell the user."
 fi
 # core.hooksPath: any mention of it denies, unless the mention is part of a known read. Listing every way to write it
