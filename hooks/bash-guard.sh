@@ -108,16 +108,17 @@ fi
 # in review, while a mention is easy to see. Mentions are counted on hptext (quotes, backslashes and the $ of $'..'
 # removed, grep patterns not rewritten); reads are matched on rawcmd, where quotes still show. The only reads: git at
 # the start of a command (line start, or after an unescaped ; & | ( or $( , optionally after if, then, elif, do, ! or
-# time, so xargs or another wrapper cannot add a value), then `config [scope] core.hooksPath` followed only by the
-# end, ;, &&, ||, | or ) (no redirects: a redirect can hide a value), or `config [scope] get|--get* [scope]
-# core.hooksPath`. Everything else denies: removing it (in a repo that sets it, such as Husky's .husky/_, unset
-# switches the hooks off), removing or renaming the core section, `-c core.hooksPath=... clone`, and text such as
+# time, so xargs or another wrapper cannot add a value), then `config [scope] core.hooksPath` followed only by spaces
+# or tabs and then the end, ;, &&, ||, | or ) (bash passes VT, FF and CR on as a value; no redirects: a redirect can
+# hide a value), or `config [scope] get|--get* [scope] core.hooksPath`. Everything else denies: removing it (in a repo
+# that sets it, such as Husky's .husky/_, unset switches the hooks off), removing the core section (--remove-section,
+# any prefix of it git accepts, or the remove-section subcommand) or renaming it, `-c core.hooksPath=... clone`, and text such as
 # `echo core.hooksPath`, a grep for it or a commit message naming it (known false positives). Each read matches
 # exactly one mention, so mentions > reads means a non-read. Out of reach: escapes inside $'..' that spell the key.
 hp='(?i:core\.hookspath)'
 scope='(?:(?:--(?:local|global|system|worktree|show-origin|show-scope|null|includes|no-includes)|-z)\s+)*'
 atcmd='(?:^|(?<=[;&|(])(?<!\\[;&|(])|(?<=\$\())\s*(?:(?:if|then|elif|do|!|time)\s+)?'
-readhp="${atcmd}git\\s+config\\s+${scope}${hp}(?=\\s*(?:;|&&|\\|\\|?|\\)|\$))"
+readhp="${atcmd}git\\s+config\\s+${scope}${hp}(?=[ \\t]*(?:;|&&|\\|\\|?|\\)|\$))"
 readhp+="|${atcmd}git\\s+config\\s+${scope}(?:--get(?:-[\\w-]+)?|get)\\s+${scope}${hp}"
 hp_mentions=$(count_in "$hptext" "${hp}")
 hp_reads=0
@@ -125,7 +126,7 @@ hp_reads=0
 # gone, is not a literal read, so it counts as a mention without a read and denies.
 if [ "$hp_mentions" -gt 0 ]; then hp_reads=$(count_in "$rawcmd" "${readhp}"); fi
 if [ "$hp_mentions" -gt "$hp_reads" ] ||
-   has "${git}config\\s+(?:\\S+\\s+)*?--(?:remove|rename)-section\\s+${q}(?i:core)${q}(?![\\w.-])" ||
+   has "${git}config\\s+(?:\\S+\\s+)*?(?:--rem[a-z-]*|--rename-section|remove-section)\\s+(?:[^\\s;&|]+\\s+)*?${q}(?i:core)${q}(?![\\w.-])" ||
    has "(?<![\\w.-])(?:SKIP|HUSKY|LEFTHOOK|PRE_COMMIT_ALLOW_NO_CONFIG)=\\S*\\s+(?:\\S+\\s+)*?${git}(?:commit|push|merge)(?![\\w-])"; then
   decide deny "Changing or disabling git hooks counts as bypassing them. Ask the user; they can run it themselves with ! if they want it."
 fi
