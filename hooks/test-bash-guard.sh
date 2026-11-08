@@ -151,6 +151,84 @@ check deny 'podman secret inspect --showsecret llama_api_key'
 check deny "podman secret inspect --showsecret --format '{{.SecretData}}' llama_api_key | tr -d '\\n'"
 check deny "echo \"\$(podman secret inspect --showsecret --format '{{.SecretData}}' llama_api_key)\""
 check deny 'git commit --no-verify && git push'   # deny wins over ask
+# --- global options with a space before the value (git 2.56.0 takes the next word; these were allowed before) ---
+# BEGIN space-value global options
+check ask 'git --git-dir /srv/repo push origin main'   # not .git here: the git in .git would match on its own
+check deny 'git --git-dir /srv/repo commit --no-verify -m x'
+check deny 'git --git-dir /srv/repo config --remove-section core'
+check - 'git --git-dir .git status'
+check ask 'git --work-tree . push origin main'
+check deny 'git --work-tree . commit --no-verify -m x'
+check deny 'git --work-tree . config --remove-section core'
+check - 'git --work-tree . status'
+check ask 'git --namespace ns push origin main'
+check deny 'git --namespace ns commit --no-verify -m x'
+check deny 'git --namespace ns config --remove-section core'
+check - 'git --namespace ns log -1'
+check ask 'git --attr-source HEAD push origin main'
+check deny 'git --attr-source HEAD commit --no-verify -m x'
+check deny 'git --attr-source HEAD config --remove-section core'
+check - 'git --attr-source HEAD diff'
+check ask 'git --config-env user.name=U push origin main'
+check deny 'git --config-env user.name=U commit --no-verify -m x'
+check deny 'git --config-env user.name=U config --remove-section core'
+check - 'git --config-env user.name=U status'
+check ask "git -C repo --git-dir 'a b/.git' --work-tree \"a b\" --no-pager push"
+check ask 'git --git-dir -c push origin main'   # the value may start with -: git takes it as the path
+check - 'git --git-dir .git --work-tree . stash push -m wip'
+check - 'git --git-dir=.git status'
+check - 'git --git-dir push'   # git 2.56.0 takes push as the path and runs no subcommand; this asked before
+# Known gaps (main too): values are read without shell escapes, so these reach no subcommand and are allowed.
+check - "git --git-dir='a b/.git' push"
+check - 'git --work-tree="a b" push origin main'
+check - 'git -C a\ b push'
+check - "git -C a\\'b push origin main"
+check - "git --git-dir a\\'b push"
+# A --flag=value with an escaped quote is still read whole by =\S+, as before. Earlier drafts of this change that read
+# shell escapes allowed these, then the $$'..' cases further down (security reviews, 2026-11-08).
+check ask "git --namespace='it'\\''s' push origin main"
+check ask 'git --namespace="a\"b" push origin main'
+check ask "git --namespace=\$'a\\'b' push origin main"
+check ask "git --namespace=a\\'b push origin main"
+check ask 'git --git-dir=x\"y push'
+check deny 'git --git-dir="a\"b/.git" commit -n -m x'
+check deny "git --namespace='it'\\''s' commit --no-verify -m x"
+check deny "HUSKY=0 git --namespace='it'\\''s' commit -m x"
+check ask "git -c x.y=\$\$'\\' push origin main; echo 'pushed ok'"   # bash reads $$ first, then '\' as plain quotes
+check ask "git -C \$\$'a\\' push 'b c'"
+check ask "git --namespace=\$\$'a\\' push 'b c'"
+check deny "git -c x.y=\$\$'\\' commit --no-verify -m 'b c'"
+check deny "git -c x.y=\$\$'\\' commit -n -m 'b c'"
+check deny "HUSKY=0 git -c x.y=\$\$'\\' commit -m 'b c'"
+# END space-value global options
+# A value that ends in git is not taken as a value (that kept long git -C git ... chains quadratic); the git it ends in
+# starts a match of its own, so these still decide as before.
+check ask 'git -C git push origin main'
+check ask 'git -c user.name=git push'
+check ask 'git --work-tree git push'
+check - 'git -C git status'
+# Security review 2026-11-08: the SKIP/HUSKY rule needed its git after a space, so these were allowed by the change above.
+check deny 'HUSKY=0 git -C ~/src/git commit -m x'
+check deny 'HUSKY=0 git -c user.name=git commit -m x'
+check deny 'SKIP=all git -C .git commit -m x'
+check deny 'PRE_COMMIT_ALLOW_NO_CONFIG=1 git -C vendor/git commit -m x'
+check deny 'HUSKY=0 git -c core.editor=git merge topic'
+check deny 'SKIP=lint git -C ~/git push origin main'
+check deny 'HUSKY=0 git --git-dir ~/r/.git commit -m x'   # allowed before this change as well
+check deny 'HUSKY=0 /usr/bin/git commit -m x'   # allowed before: the rule needed git right after a space
+check - 'HUSKY=0 npm test && git -C ~/src/git status'
+# The rule is anchored at the first assignment on each line: a later line, or a later assignment, still counts.
+check deny $'ls\nHUSKY=0 git commit -m x'
+check deny 'SKIP= true; LEFTHOOK=0 git commit -m x'
+# Known false positive (main too): the rule runs past a ; separator, so a SKIP= that reaches only true still counts.
+check deny 'a=1 SKIP=x true; git -C ~/src/git commit -m x'
+# grep matches line by line, so the rule never spans lines. Known gap (main too): export HUSKY=0 on one line and a git
+# commit on the next skips Husky's hooks and is allowed.
+check - $'SKIP=1 true\ngit commit -m x'
+# Known false positives added by this change (main allowed both): after an assignment, a git that follows any character
+# other than a word character or -, such as a quote, /, ., = or :, counts too (HUSKY=0 make DIR=git commit denies).
+check deny 'HUSKY=0 npm test; echo "git commit"'
+check deny 'HUSKY=0 make -C ~/src/git commit'
 
 # --- no decision: reads, safe forms, and near misses ---
 check - 'git status && git log --oneline -3'

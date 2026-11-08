@@ -23,7 +23,10 @@
 # config-based hooks (hook.NAME.*) are left to the written rules in CLAUDE.md and the git-workflow skill.
 # Known limitations: a backslash-newline continuation is joined with a space, while bash joins it with nothing, so a
 # word split across one is read as two words; and the --no-verify scan stops at a ; & or | even inside quotes, so a
-# --no-verify after a quoted argument that holds one (git commit -m 'a; b' --no-verify) is missed.
+# --no-verify after a quoted argument that holds one (git commit -m 'a; b' --no-verify) is missed. Global-option values
+# are read without shell escapes: an escaped quote in a -C, -c or space-separated value (git -C a\'b commit -n,
+# git -c k=$'a\'b' push) shifts the quote pairing and hides the subcommand, so its push or hook bypass is missed; a
+# quoted space after = (--git-dir='a b') or an escaped space (-C a\ b) ends the options run the same way.
 set -euo pipefail
 
 # 1 also asks before every git commit. CLAUDE.md's "ask before commits" held in the
@@ -80,10 +83,23 @@ count_in() { # count_in <text> <pattern>: the number of matches. Call it only as
 }
 
 q="[\"']?"   # an optional opening quote
-# "git", then only global options (-C dir, -c k=v, --flag[=v]), then the subcommand.
+# "git", then only global options (-C dir, -c k=v, --flag[=v], --opt v), then the subcommand.
 # A -C/-c value is one shell word, quotes included: -c alias.sp='stash push' is not a push.
 # -c/-C never stand alone as a flag, or -c push.default=simple would read as the subcommand push.
-git="(?<![\\w-])git(?:\\s+(?:-[Cc]\\s+(?:[^\\s'\"]|'[^']*'|\"[^\"]*\")+|--[A-Za-z][\\w-]*(?:=\\S+)?|-[A-BD-Za-bd-z][A-Za-z]*))*\\s+"
+# The long options git(1) documents with a value that git 2.56.0 also takes as the next word (spaceopt) always take
+# that word, even one starting with -, as git does; written without = they never match as a bare --flag. So each word
+# reads one way only, and a long run of options cannot backtrack. (--list-cmds needs =; --exec-path without = prints.)
+# A value word may not end in a git that could start a match (git -C git, -c k=git): that git is then tried as a start
+# of its own and reads the same words that follow. Otherwise each git in a chain such as git -C git -C git ... is both a
+# value and a start that scans to the end, which is quadratic: seconds on a 10,000-word command. A --flag=value keeps
+# its \S+ value, with the same rule, so --namespace=x/git chains stay linear too.
+# Words are read as before this change: no shell escapes (\x, $'..', \" inside ".."). Reading them was tried and each
+# version hid a subcommand in a new way ('it'\''s', then $$'..'). So, as before, an escaped quote in a -C, -c or space-
+# separated value hides the subcommand, and a quoted space after = or an escaped space ends the options run (see Known
+# limitations at the top).
+word="(?:[^\\s'\"]|'[^']*'|\"[^\"]*\")+(?<!(?<![\\w-])git)"   # one shell word, quotes included
+spaceopt='(?:git-dir|work-tree|namespace|attr-source|config-env)'
+git="(?<![\\w-])git(?:\\s+(?:-[Cc]\\s+${word}|--${spaceopt}\\s+${word}|--(?!${spaceopt}(?![\\w=-]))[A-Za-z][\\w-]*(?:=\\S+(?<!(?<![\\w-])git))?|-[A-BD-Za-bd-z][A-Za-z]*))*\\s+"
 seg='[^\n;&|]*'   # the rest of one simple command
 # The same as an argv list: subprocess.run(["git", "-C", repo, "push"]), execFileSync("git", ["push"]).
 # Elements are string literals (an outer shell string may escape the quotes as \"); a -C/-c
@@ -127,9 +143,13 @@ hp_reads=0
 # Reads are matched on rawcmd: a quoted key or value, or a quoted ; | ) that looks like a separator once quotes are
 # gone, is not a literal read, so it counts as a mention without a read and denies.
 if [ "$hp_mentions" -gt 0 ]; then hp_reads=$(count_in "$rawcmd" "${readhp}"); fi
+# The SKIP/HUSKY rule lets its git start inside a word (\S*?), like every other ${git} rule: a value ending in git (-C
+# ~/src/git) is not taken as a value, so the match starts at that git, and /usr/bin/git is caught the same way. It is
+# anchored at the first assignment on the line (\A and an atomic group; grep matches line by line): any git after a
+# later one is also after the first, and starting again at every VAR= made HUSKY=0 HUSKY=0 ... take seconds.
 if [ "$hp_mentions" -gt "$hp_reads" ] ||
    has "${git}config\\s+(?:\\S+\\s+)*?(?:--re[mn][a-z-]*|re(?:move|name)-section)\\s+(?:[^\\s;&|]+\\s+)*?${q}(?i:core)${q}(?![\\w.-])" ||
-   has "(?<![\\w.-])(?:SKIP|HUSKY|LEFTHOOK|PRE_COMMIT_ALLOW_NO_CONFIG)=\\S*\\s+(?:\\S+\\s+)*?${git}(?:commit|push|merge)(?![\\w-])"; then
+   has "\\A(?>.*?(?<![\\w.-])(?:SKIP|HUSKY|LEFTHOOK|PRE_COMMIT_ALLOW_NO_CONFIG)=)\\S*\\s+(?:\\S+\\s+)*?\\S*?${git}(?:commit|push|merge)(?![\\w-])"; then
   decide deny "Changing or disabling git hooks counts as bypassing them. Ask the user; they can run it themselves with ! if they want it."
 fi
 
