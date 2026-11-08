@@ -219,6 +219,33 @@ check - 'git --shallow-file x log --oneline'
 check - 'git --shallow-file push origin'
 check ask 'git --shallow-file=x push'   # known false positive: git rejects --shallow-file= as an unknown option
 # END space-value global options
+# --- an empty value after = does not end the options run; the subcommand after it is still read ---
+# BEGIN empty-value global options
+check ask 'git --namespace= push origin main'
+check deny 'git --namespace= commit --no-verify -m x'
+check deny 'git --namespace= config --remove-section core'
+check - 'git --namespace= log -1'
+check ask 'git --attr-source= push origin main'
+check deny 'git --attr-source= commit --no-verify -m x'
+check deny 'git --attr-source= config --remove-section core'
+check - 'git --attr-source= diff'
+check ask 'git --exec-path= push origin main'
+check deny 'git --exec-path= commit --no-verify -m x'
+check deny 'git --exec-path= config --remove-section core'
+check - 'git --exec-path= status'
+check ask 'git --namespace= --attr-source= -C repo --exec-path= push'
+check deny 'git --namespace= commit -n -m x'
+check deny 'HUSKY=0 git --attr-source= commit -m x'
+check ask 'git --namespace= push --dry-run; git --namespace= push'
+check - 'git --namespace= push --dry-run origin main'
+# These four ask or deny conservatively: the guard reads any empty --flag= the same way.
+check ask 'git --git-dir= push'
+check ask 'git --work-tree= push'
+check deny 'git --config-env= commit --no-verify -m x'
+check ask 'git --list-cmds= push'
+check deny 'git --git-dir= config --global --remove-section core'
+check - 'git --namespace= -C git stash push'
+# END empty-value global options
 # A value that ends in git is not taken as a value (that kept long git -C git ... chains quadratic); the git it ends in
 # starts a match of its own, so these still decide as before.
 check ask 'git -C git push origin main'

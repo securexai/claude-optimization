@@ -99,15 +99,17 @@ q="[\"']?"   # an optional opening quote
 # reads one way only, and a long run of options cannot backtrack.
 # A value word may not end in a git that could start a match (git -C git, -c k=git): that git is then tried as a start
 # of its own and reads the same words that follow. Otherwise each git in a chain such as git -C git -C git ... is both a
-# value and a start that scans to the end, which is quadratic: seconds on a 10,000-word command. A --flag=value keeps
-# its \S+ value, with the same rule, so --namespace=x/git chains stay linear too.
+# value and a start that scans to the end, which is quadratic: seconds on a 10,000-word command. A --flag=value reads
+# its value as \S*, with the same rule, so --namespace=x/git chains stay linear too. The value may be empty, so an empty
+# =value (git --namespace= push) does not end the options run: the subcommand after it is still read.
+# The inline-alias pattern (alias_push) reads =\S+, so an alias starting with --exec-path= is not matched.
 # Words are read as before this change: no shell escapes (\x, $'..', \" inside ".."). Reading them was tried and each
 # version hid a subcommand in a new way ('it'\''s', then $$'..'). So, as before, an escaped quote in a -C, -c or space-
 # separated value hides the subcommand, and a quoted space after = or an escaped space ends the options run (see Known
 # limitations at the top).
 word="(?:[^\\s'\"]|'[^']*'|\"[^\"]*\")+(?<!(?<![\\w-])git)"   # one shell word, quotes included
 spaceopt='(?:git-dir|work-tree|namespace|attr-source|config-env|shallow-file)'
-git="(?<![\\w-])git(?:\\s+(?:-[Cc]\\s+${word}|--${spaceopt}\\s+${word}|--(?!${spaceopt}(?![\\w=-]))[A-Za-z][\\w-]*(?:=\\S+(?<!(?<![\\w-])git))?|-[A-BD-Za-bd-z][A-Za-z]*))*\\s+"
+git="(?<![\\w-])git(?:\\s+(?:-[Cc]\\s+${word}|--${spaceopt}\\s+${word}|--(?!${spaceopt}(?![\\w=-]))[A-Za-z][\\w-]*(?:=\\S*(?<!(?<![\\w-])git))?|-[A-BD-Za-bd-z][A-Za-z]*))*\\s+"
 seg='[^\n;&|]*'   # the rest of one simple command
 # The same as an argv list: subprocess.run(["git", "-C", repo, "push"]), execFileSync("git", ["push"]).
 # Elements are string literals (an outer shell string may escape the quotes as \"); a -C/-c
