@@ -46,7 +46,7 @@ How approval works:
 
 - The change sets the risk tier, not who wrote it. **Low:** docs, comments, and added tests. **High:** paths a repository's instructions mark high-risk, plus anything that touches authentication, secrets, SSH or firewall rules, Git hooks, CI, `.gitignore`, or Claude Code settings and policy. **Medium:** everything else.
 - For medium changes, run `/code-review medium` before asking me to commit or push. For high changes, run `/code-review high` and `/security-review` (if it isn't available in the session, say so), and state how to roll the change back. Always type the level, because a bare `/code-review` reuses the last level typed. Use `max` or `ultra` only when I ask.
-- Wait for the review to finish, then fix or explain each finding. After a fix, review only the new diff. After three review-and-fix rounds on the same change, stop and propose a different approach instead of a fourth round.
+- Wait for the review to finish, then fix or explain each finding. Change code only for a finding that is a security issue or wrong behavior reproduced on realistic input, and correct any doc statement a finding shows to be false; record the other findings as known limits instead of fixing them. After a fix, review only the new diff. After three review-and-fix rounds on the same change, stop and propose a different approach instead of a fourth round.
 - A review by you or another agent never replaces mine on a high change. My approval covers the exact diff I saw; a later commit needs a fresh look.
 - Your last message is the handoff, even if a review skill says its report must be your final reply. In it, give the tier, the checks run and their results, each review finding and what you did about it, and what was tested live versus offline.
 
